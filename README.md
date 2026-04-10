@@ -1,4 +1,4 @@
-# The Job Search Autopilot
+# Job Search Autopilot
 
 A personal job search automation tool that aggregates listings from 11 sources daily, filters them against your criteria, rates them with Claude AI, and emails you a ranked digest each morning.
 
@@ -72,27 +72,74 @@ Windows — use Task Scheduler pointing to `python scripts/job_radar.py --run`.
 
 Gmail requires an [App Password](https://myaccount.google.com/apppasswords) — not your regular login password.
 
-## Customising for yourself
+---
 
-All personalisation lives in `scripts/config.py`. The key things to update:
+## Making it yours — use AI to customise everything
 
-- **`PROFILE`** — your name, current role, target roles, and career summary. This is what Claude reads when rating each job, so the more accurate it is, the better your ratings will be.
-- **`MIN_SALARY`** — your minimum acceptable salary as a number (e.g. `150000`).
-- **`RALEIGH_TERMS`** — replace with your own city and surrounding metro area names. Any job requiring on-site attendance outside these terms gets filtered out automatically.
-- **`COMPANIES`** — the ATS company list (see below).
-- **`VACATION_START` / `VACATION_END`** — set both to past dates if you are not on vacation.
+This tool is built to be customised. The filters, search queries, company list, and rating logic are all plain text or Python lists — easy to read and easy to change even if you are not a developer.
 
-The search queries (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `LI_REMOTE_QUERIES` etc.) are all in config.py too. Tailor them to your target job titles and industries for better results.
+The fastest way to personalise it is to **upload the files directly into Claude or ChatGPT** and describe what you want. You don't need to understand every line of code. Just tell the AI what to change and it will handle the syntax. This approach — using plain English to drive code changes — is sometimes called "vibe coding" and it works really well for a project like this.
 
-**Tip:** The `SETUP.txt` file includes ready-to-use prompts you can paste into Claude or ChatGPT to generate your profile block, search queries, and ATS company list from scratch.
+**How to do it:**
+
+1. Go to [claude.ai](https://claude.ai) or [chatgpt.com](https://chatgpt.com)
+2. Upload `job_radar.py` and `config.example.py` as attachments
+3. Describe what you want changed
+4. Copy the updated code back into your files
+
+**Example prompts to get you started:**
+
+> *"I've attached job_radar.py and config.example.py. I'm a software engineer looking for senior engineering and tech lead roles in the Seattle area. Can you update TARGET_TITLES, set RALEIGH_TERMS to match the Seattle metro, and rewrite the PROFILE block for my background?"*
+
+> *"I want to filter out all jobs that mention Salesforce as a hard requirement, all healthcare roles, and anything that's a contract position. Can you add these to HARD_DISQUALIFIERS in job_radar.py?"*
+
+> *"I work in data science. Can you update TARGET_TITLES for data science roles, rewrite the Claude rating prompt so it scores data engineering and ML roles as Perfect Fit, and suggest 20 data-focused companies for the COMPANIES list?"*
+
+> *"Can you help me find the Greenhouse/Lever/Ashby slugs for these companies and add them to the COMPANIES list: [your list]?"*
+
+> *"The rating prompt currently describes a product manager. Can you rewrite it for a UX designer targeting senior design roles?"*
+
+The `SETUP.txt` file has more detailed prompts for each specific part of the tool — start there if you want step-by-step guidance.
+
+---
+
+## What you can customise
+
+### In `config.py` (your personal file, never committed to GitHub)
+
+**`PROFILE`** — the most important thing to personalise. Claude reads this when rating every single job. Write it like a concise professional summary: your current role, your background, what you are targeting, your strengths, and your hard constraints (location, salary, types of work you won't do). The more specific you are, the better the ratings.
+
+**`MIN_SALARY`** — your salary floor as a plain number (e.g. `150000`). Jobs with a confirmed range entirely below this are filtered before Claude sees them. Jobs with no salary listed always pass through.
+
+**`RALEIGH_TERMS`** — replace this with your own city and surrounding suburb names. The radar uses this list to identify local hybrid and onsite roles and show them in a separate section of your email digest. Leave it empty if you only want remote roles.
+
+**`COMPANIES`** — the direct ATS company watchlist. The radar checks Greenhouse, Lever, and Ashby job boards for every company in this list on every run. See the section below for how to find slugs.
+
+**`VACATION_START` / `VACATION_END`** — set both to past dates if you are not on vacation. During vacation the radar buffers results and sends one digest when you return.
+
+**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_RALEIGH_QUERIES`) — tailor these to your exact job titles and industry keywords. Better queries mean more relevant results from each source.
+
+### In `job_radar.py`
+
+**`TARGET_TITLES`** — keyword list that controls which job titles are considered relevant. Anything that does not match at least one keyword is dropped before any other processing. Ships with PM/PO/BA titles as examples — update this for your role type.
+
+**`HARD_DISQUALIFIERS`** — phrases that auto-skip a job before it reaches Claude. Use this for things you are 100% certain you never want: specific industries, contract-only language, unwanted tech stacks. Ships empty so you can add your own without inherited assumptions.
+
+**`_COMPANY_PREFILTER`** — staffing agencies and job aggregators to block by company name. Ships with a few well-known ones. Add any agencies you keep seeing in your results.
+
+**`SALARY_FLOOR_EXEMPT`** — companies you know pay well above your floor even when a search snippet shows a misleadingly low number. Ships empty — add employers in your target industry where you trust the compensation.
+
+**`_URL_CITY_RE` and `_LOC_CITY_RE`** — two lists that catch onsite-outside-your-area jobs. Pre-loaded with major US metros and international cities. Remove any cities within your commutable area; add cities you want to block.
+
+**Claude rating prompt** — the tier definitions and rules Claude uses to score every job. Find the section starting with `"Perfect Fit" = 90-100%` in `job_radar.py`. Edit this in plain English to describe your situation: what makes an ideal role, what your core strengths are, what your hard nos are. Claude follows this literally, so specificity pays off here more than anywhere else.
+
+---
 
 ## Adding companies to the ATS list
 
-The `COMPANIES` list in `config.py` is the most powerful feature. The radar checks Greenhouse, Lever, and Ashby job boards directly for every company in the list — you see roles before they hit the aggregator sites.
+The `COMPANIES` list in `config.py` is the most powerful part of the tool. Direct ATS access means you see new postings the moment they go live, often before they show up on any aggregator.
 
 **Finding a company's slug:**
-
-The slug is usually just the company name lowercased, sometimes with hyphens for spaces. You can find it by visiting the company's careers page and looking at the URL:
 
 | ATS | URL pattern | Slug |
 |---|---|---|
@@ -100,29 +147,15 @@ The slug is usually just the company name lowercased, sometimes with hyphens for
 | Lever | `jobs.lever.co/plaid` | `plaid` |
 | Ashby | `jobs.ashbyhq.com/mercury` | `mercury` |
 
-The radar tries all three APIs for each slug automatically, so you don't need to know which one a company uses — just add the slug and it figures it out.
+The radar tries all three APIs for each slug automatically — you don't need to know which one a company uses, just add the slug.
 
-**Examples of slugs that differ from the company name:**
+**Tips for finding slugs:**
+- Try the company name lowercased with no spaces first (`wealthsimple`, `nerdwallet`)
+- If that returns nothing, try with hyphens (`cash-app`)
+- Browse [boards.greenhouse.io](https://boards.greenhouse.io) to search Greenhouse companies directly
+- Ask Claude: *"What is the Greenhouse/Lever/Ashby ATS slug for [Company Name]?"*
 
-```python
-"cash-app",       # not "cashapp"
-"affirm",         # straightforward
-"wealthsimple",   # no space
-"nerdwallet",     # no space
-```
-
-If you are not sure of a slug, try the company name lowercased with no spaces first. If that returns nothing, try it with hyphens. You can also search for the company on [Greenhouse's job board list](https://boards.greenhouse.io) or paste the company into Claude or ChatGPT and ask for their likely ATS slug.
-
-## Tuning the Claude rating prompt
-
-The rating prompt in `job_radar.py` controls how Claude scores each job. Find the section that starts with `"Perfect Fit" = 90-100%` and edit the tier definitions and hard disqualifiers to match your situation.
-
-For example you can:
-- Change which industries count as Perfect Fit vs Good Fit
-- Add or remove hard disqualifiers (e.g. company size, specific platforms required)
-- Add companies you have already applied to so they get skipped automatically
-
-The `SETUP.txt` file includes a ready-made prompt to paste into Claude or ChatGPT that walks you through tuning the rating logic for your specific background.
+---
 
 ## Output files
 
