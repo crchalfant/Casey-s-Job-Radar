@@ -33,7 +33,7 @@ BOARD COLUMNS
 SKIPPED TAB ACTIONS
   Add to Reviewing  - Moves the job onto the main board Reviewing column
   Flag for Review   - Saves to flagged_for_review.json with your note; upload
-                      this file to Claude after vacation for filter re-review
+                      this file to your AI tool for filter re-review
   Delete (trash)    - Permanently hides the card from the skipped view
 
 SECURITY NOTES (from code review 2026-03-18)
@@ -56,6 +56,8 @@ import threading
 from datetime import datetime
 from flask import Flask, jsonify, request, render_template_string, send_from_directory
 
+from radar_shared import atomic_write_json, make_job_id, safe_json_load
+
 # FIX (code review 2026-03-18): api_flag and api_unflag both do read-modify-write
 # on flagged_for_review.json. Without a lock, two simultaneous requests (e.g. double-
 # click) could both read the old file, both modify it, and the second write would
@@ -67,6 +69,7 @@ _flagged_lock = threading.Lock()
 # Flask versions may enable threading. _board_lock prevents concurrent writes
 # corrupting board_state.json under threaded execution.
 _board_lock = threading.Lock()
+_cache_lock = threading.Lock()
 
 app = Flask(__name__)
 
@@ -83,24 +86,30 @@ _CACHE_TTL = 30  # seconds — radar only writes once/day so 30s is safe
 
 def _invalidate_job_cache():
     """Call after any write that changes what jobs appear on the board."""
-    _jobs_cache["at"] = 0.0
-    _skipped_cache["at"] = 0.0
+    with _cache_lock:
+        _jobs_cache["jobs"] = None
+        _jobs_cache["ids"] = None
+        _jobs_cache["at"] = 0.0
+        _skipped_cache["jobs"] = None
+        _skipped_cache["at"] = 0.0
 
 def _cached_load_all_jobs():
     now = _time_module.time()
-    if _jobs_cache["jobs"] is None or now - _jobs_cache["at"] > _CACHE_TTL:
-        jobs, ids = load_all_jobs()
-        _jobs_cache["jobs"] = jobs
-        _jobs_cache["ids"]  = ids
-        _jobs_cache["at"]   = now
-    return _jobs_cache["jobs"], _jobs_cache["ids"]
+    with _cache_lock:
+        if _jobs_cache["jobs"] is None or now - _jobs_cache["at"] > _CACHE_TTL:
+            jobs, ids = load_all_jobs()
+            _jobs_cache["jobs"] = jobs
+            _jobs_cache["ids"]  = ids
+            _jobs_cache["at"]   = now
+        return _jobs_cache["jobs"], _jobs_cache["ids"]
 
 def _cached_load_all_skipped():
     now = _time_module.time()
-    if _skipped_cache["jobs"] is None or now - _skipped_cache["at"] > _CACHE_TTL:
-        _skipped_cache["jobs"] = load_all_skipped()
-        _skipped_cache["at"]   = now
-    return _skipped_cache["jobs"]
+    with _cache_lock:
+        if _skipped_cache["jobs"] is None or now - _skipped_cache["at"] > _CACHE_TTL:
+            _skipped_cache["jobs"] = load_all_skipped()
+            _skipped_cache["at"]   = now
+        return _skipped_cache["jobs"]
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 # FIX (code review 2026-03-18): All paths previously used relative strings like
@@ -125,90 +134,27 @@ COLUMNS = ["Reviewing", "Applied", "Interviewing"]
 
 def load_board_state():
     """Load board state from disk. Returns dict keyed by job_id."""
-    if not os.path.exists(BOARD_STATE):
+    state = safe_json_load(BOARD_STATE, default={}, expected_type=dict)
+    if not isinstance(state, dict):
+        app.logger.warning("load_board_state: unexpected payload type, starting fresh")
         return {}
-    try:
-        with open(BOARD_STATE, encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        # FIX (code review): previously silent. A corrupt board_state.json would
-        # silently reset all card positions to default with no user-facing indication.
-        app.logger.warning("load_board_state: corrupt file, starting fresh: %s", e)
-        return {}
+    return state
 
 
 def save_board_state(state):
-    """Atomically write board state to disk.
-
-    FIX (code review): previously caught OSError and returned normally, causing
-    the calling route to return {"ok": True} even on disk failure. The card
-    would appear to move/reject/flag on screen but revert on next reload.
-    Now raises so callers can return a 500 to the client.
-
-    FIX (data integrity): validates that no entry has both rejected=True and
-    a column set simultaneously — that state is contradictory (a job cannot be
-    on the board and rejected at the same time). If found, rejected takes
-    precedence and column is cleared. This prevents ghost cards.
-    """
-    # Integrity check: rejected + column is contradictory — rejected wins
+    """Atomically write board state to disk."""
     repaired = 0
     for jid, s in state.items():
+        if not isinstance(s, dict):
+            state[jid] = {}
+            s = state[jid]
+            repaired += 1
         if s.get("rejected") and s.get("column"):
             del s["column"]
             repaired += 1
     if repaired:
-        app.logger.warning("save_board_state: repaired %d entries with rejected+column conflict", repaired)
-
-    os.makedirs(JOBS_DIR, exist_ok=True)
-    tmp = BOARD_STATE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-    os.replace(tmp, BOARD_STATE)
-
-
-def make_job_id(job):
-    """Stable ID from company + title — same job from multiple days stays one card.
-
-    MUST produce the same key as dedup_keys()/normalize_title() in job_radar.py
-    for the company|title path. If these diverge, a job rejected on the board
-    may reappear after seen.json expires (60 days) because the rejected state
-    is filed under a different key than the new entry.
-
-    Normalization mirrors job_radar.py normalize_title():
-      1. _TITLE_CLEANUP_RE strips trailing "- Remote, US", "- Hybrid", etc.
-      2. Parenthetical location words stripped: "(Remote)", "(US)", etc.
-      3. Trailing location suffix after " - " or " | " stripped if all location words.
-    """
-    company = (job.get("company") or "").strip().lower()
-    title   = (job.get("title")   or "").strip().lower()
-
-    # Step 1: strip trailing dash/pipe location suffix (e.g. "- Remote, US", "| Hybrid")
-    title = re.sub(
-        r"\s*[-–|]\s*(remote|remote,?\s*(us|usa)?|hybrid|onsite|on-site"
-        r"|united states?|us|usa|\w{2,3},\s*\w{2})\s*$",
-        "", title, flags=re.IGNORECASE,
-    ).strip()
-
-    # Step 2: strip parenthetical location words (e.g. "(Remote)", "(US)")
-    _location_words = {"remote", "us", "usa", "united states", "nationwide",
-                       "anywhere", "hybrid", "onsite", "on-site", "contract",
-                       "full-time", "full time", "part-time", "part time"}
-    title = re.sub(
-        r"\(([^)]*)\)",
-        lambda m: "" if m.group(1).strip().lower() in _location_words else m.group(0),
-        title,
-    ).strip()
-
-    # Step 3: strip trailing location segment after " - " or " | "
-    for sep in [" - ", " | "]:
-        if sep in title:
-            parts = title.split(sep)
-            suffix_words = set(re.split(r"[\s,]+", parts[-1]))
-            if suffix_words.issubset(_location_words):
-                title = sep.join(parts[:-1]).strip()
-
-    title = re.sub(r"\s+", " ", title).strip()
-    return f"{company}|{title}"
+        app.logger.warning("save_board_state: repaired %d malformed entries", repaired)
+    atomic_write_json(BOARD_STATE, state)
 
 
 def load_all_jobs():
@@ -222,11 +168,15 @@ def load_all_jobs():
         try:
             with open(path, encoding="utf-8") as f:
                 jobs = json.load(f)
+            if not isinstance(jobs, list):
+                raise ValueError("jobs file must contain a list")
             for job in jobs:
+                if not isinstance(job, dict):
+                    continue
                 jid = make_job_id(job)
                 if jid not in seen_ids:
                     seen_ids[jid] = job
-        except (json.JSONDecodeError, OSError) as e:
+        except (ValueError, json.JSONDecodeError, OSError) as e:
             # FIX (code review): previously silent. Now logs so the user knows
             # why fewer jobs appear on the board than expected.
             app.logger.warning("load_all_jobs: skipping corrupt file %s: %s", path, e)
@@ -248,11 +198,15 @@ def load_all_skipped():
                 # FIX (code review 2026-03-18): Originally used 'jobs = json.load(f)'
                 # which shadowed a common outer-scope variable name. Renamed to 'entries'.
                 entries = json.load(f)
+            if not isinstance(entries, list):
+                raise ValueError("skipped file must contain a list")
             for job in entries:
+                if not isinstance(job, dict):
+                    continue
                 jid = make_job_id(job)
                 if jid not in seen_ids:
                     seen_ids[jid] = job
-        except (json.JSONDecodeError, OSError) as e:
+        except (ValueError, json.JSONDecodeError, OSError) as e:
             app.logger.warning("load_all_skipped: skipping corrupt file %s: %s", path, e)
             continue
     # Sort newest date_found first
@@ -333,6 +287,21 @@ def build_board(jobs, state):
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
+def _payload_dict():
+    data = request.get_json(silent=True) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _validated_job_id(data):
+    job_id = data.get("id")
+    return job_id.strip() if isinstance(job_id, str) and job_id.strip() else None
+
+
+def _validated_column(data):
+    column = data.get("column")
+    return column if column in COLUMNS else None
+
+
 @app.route("/")
 def index():
     return render_template_string(BOARD_HTML)
@@ -370,11 +339,11 @@ def api_board():
 @app.route("/api/move", methods=["POST"])
 def api_move():
     """Move a card to a different column."""
-    data   = request.get_json(silent=True) or {}
-    job_id = data.get("id")
-    column = data.get("column")
+    data   = _payload_dict()
+    job_id = _validated_job_id(data)
+    column = _validated_column(data)
 
-    if not job_id or column not in COLUMNS:
+    if not job_id or not column:
         return jsonify({"error": "invalid"}), 400
 
     with _board_lock:
@@ -395,8 +364,8 @@ def api_move():
 @app.route("/api/reject", methods=["POST"])
 def api_reject():
     """Permanently hide a card from the board."""
-    data   = request.get_json(silent=True) or {}
-    job_id = data.get("id")
+    data   = _payload_dict()
+    job_id = _validated_job_id(data)
 
     if not job_id:
         return jsonify({"error": "invalid"}), 400
@@ -420,8 +389,8 @@ def api_unreject():
     Clears the rejected flag so the card reappears in its previous column.
     Called by the persistent ↩ Undo delete button in the header.
     """
-    data   = request.get_json(silent=True) or {}
-    job_id = data.get("id")
+    data   = _payload_dict()
+    job_id = _validated_job_id(data)
     if not job_id:
         return jsonify({"error": "invalid"}), 400
     with _board_lock:
@@ -461,8 +430,8 @@ def api_skipped():
 @app.route("/api/skip_dismiss", methods=["POST"])
 def api_skip_dismiss():
     """Permanently hide a skipped job from the skipped view."""
-    data   = request.get_json(silent=True) or {}
-    job_id = data.get("id")
+    data   = _payload_dict()
+    job_id = _validated_job_id(data)
     if not job_id:
         app.logger.warning("api_skip_dismiss: missing id in payload: %s", data)
         return jsonify({"error": "invalid", "detail": "missing id"}), 400
@@ -483,8 +452,8 @@ def api_skip_dismiss():
 @app.route("/api/restore", methods=["POST"])
 def api_restore():
     """Move a skipped job onto the Reviewing column of the main board."""
-    data   = request.get_json(silent=True) or {}
-    job_id = data.get("id")
+    data   = _payload_dict()
+    job_id = _validated_job_id(data)
     if not job_id:
         return jsonify({"error": "invalid"}), 400
     with _board_lock:
@@ -509,10 +478,10 @@ def api_restore():
 def api_flag():
     """Flag a skipped job for Claude to re-review. Writes to flagged_for_review.json.
     _flagged_lock prevents concurrent writes corrupting the file on double-click."""
-    data    = request.get_json(silent=True) or {}
-    job_id  = data.get("id")
-    note    = data.get("note", "")
-    job_data= data.get("job", {})
+    data    = _payload_dict()
+    job_id  = _validated_job_id(data)
+    note    = data.get("note", "") if isinstance(data.get("note"), str) else ""
+    job_data= data.get("job", {}) if isinstance(data.get("job"), dict) else {}
     if not job_id:
         return jsonify({"error": "invalid"}), 400
 
@@ -522,6 +491,8 @@ def api_flag():
             try:
                 with open(FLAGGED_FILE, encoding="utf-8") as f:
                     flagged = json.load(f)
+                    if not isinstance(flagged, list):
+                        flagged = []
             except (json.JSONDecodeError, OSError):
                 flagged = []
 
@@ -534,14 +505,10 @@ def api_flag():
                 "url":        job_data.get("url", ""),
                 "reason":     job_data.get("reason", ""),
                 "date_found": job_data.get("date_found", ""),
-                "user_note": note,
+                "review_note": note,
                 "flagged_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             })
-            os.makedirs(JOBS_DIR, exist_ok=True)
-            tmp = FLAGGED_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(flagged, f, indent=2)
-            os.replace(tmp, FLAGGED_FILE)
+            atomic_write_json(FLAGGED_FILE, flagged)
 
     with _board_lock:
         state = load_board_state()
@@ -560,8 +527,8 @@ def api_flag():
 def api_unflag():
     """Remove a flag from a skipped job.
     _flagged_lock prevents concurrent writes corrupting the file."""
-    data   = request.get_json(silent=True) or {}
-    job_id = data.get("id")
+    data   = _payload_dict()
+    job_id = _validated_job_id(data)
     if not job_id:
         return jsonify({"error": "invalid"}), 400
 
@@ -570,11 +537,10 @@ def api_unflag():
             try:
                 with open(FLAGGED_FILE, encoding="utf-8") as f:
                     flagged = json.load(f)
+                if not isinstance(flagged, list):
+                    flagged = []
                 flagged = [entry for entry in flagged if entry.get("id") != job_id]
-                tmp = FLAGGED_FILE + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(flagged, f, indent=2)
-                os.replace(tmp, FLAGGED_FILE)
+                atomic_write_json(FLAGGED_FILE, flagged)
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -599,6 +565,7 @@ def api_health():
     if not os.path.exists(RADAR_DB):
         return jsonify({"runs": [], "sources": [], "last_updated": None})
 
+    conn = None
     try:
         conn = sqlite3.connect(RADAR_DB, timeout=5)
         conn.row_factory = sqlite3.Row
@@ -635,8 +602,6 @@ def api_health():
                 "filters":      filters,
             })
 
-        conn.close()
-
         # Collect all source names seen across all runs for table headers
         all_sources = sorted({s["source"] for r in runs for s in r["sources"]})
 
@@ -648,7 +613,10 @@ def api_health():
 
     except Exception as e:
         app.logger.error("api_health error: %s", e)
-        return jsonify({"error": str(e), "runs": [], "sources": []}), 500
+        return jsonify({"error": "health unavailable", "runs": [], "sources": [], "last_updated": None}), 500
+    finally:
+        if conn is not None:
+            conn.close()
 # Single-file design — no separate template directory needed.
 
 BOARD_HTML = r"""<!DOCTYPE html>
@@ -817,6 +785,161 @@ BOARD_HTML = r"""<!DOCTYPE html>
   }
 
   /* ── Board layout ── */
+
+
+  /* ── Dashboard hero / controls ── */
+  .dashboard-shell {
+    padding: 28px 28px 40px;
+    max-width: 1680px;
+    margin: 0 auto;
+  }
+
+  .hero {
+    background:
+      radial-gradient(circle at top left, rgba(124,106,245,.22), transparent 34%),
+      radial-gradient(circle at top right, rgba(111,207,138,.12), transparent 28%),
+      linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0));
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 28px;
+    margin-bottom: 22px;
+    box-shadow: 0 22px 60px rgba(0,0,0,.32);
+  }
+
+  .hero-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+
+  .hero-copy { max-width: 760px; }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    margin-bottom: 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(124,106,245,.28);
+    background: rgba(124,106,245,.12);
+    color: var(--accent2);
+    font-size: 11px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  .hero-title {
+    font-size: 34px;
+    line-height: 1.05;
+    letter-spacing: -.04em;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .hero-subtitle {
+    font-size: 15px;
+    line-height: 1.6;
+    color: #aaa8ba;
+    max-width: 720px;
+  }
+
+  .hero-timestamp {
+    min-width: 220px;
+    text-align: right;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .hero-timestamp strong {
+    display: block;
+    color: var(--text);
+    font-size: 14px;
+    margin-top: 6px;
+  }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .kpi-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+    padding: 16px 18px;
+    min-height: 96px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+  }
+
+  .kpi-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 3px;
+    background: var(--kpi-accent, var(--accent));
+  }
+
+  .kpi-label {
+    color: #a4a1b8;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 700;
+  }
+
+  .kpi-value {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .kpi-foot {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .board-toolbar {
+    display: grid;
+    grid-template-columns: minmax(260px, 1.5fr) repeat(3, minmax(150px, .7fr));
+    gap: 12px;
+  }
+
+  .toolbar-field,
+  .toolbar-select {
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,.08);
+    background: rgba(9,11,18,.78);
+    color: var(--text);
+    padding: 13px 14px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+
+  .toolbar-field::placeholder { color: #7f7b94; }
+
+  .toolbar-field:focus,
+  .toolbar-select:focus {
+    border-color: rgba(124,106,245,.55);
+    box-shadow: 0 0 0 3px rgba(124,106,245,.15);
+    background: rgba(12,14,24,.92);
+  }
+
   .board {
     display: flex;
     gap: 20px;
@@ -1291,11 +1414,11 @@ BOARD_HTML = r"""<!DOCTYPE html>
   }
   .health-subtitle {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--muted);
     margin-top: 2px;
   }
   .health-no-data {
-    color: var(--text-muted);
+    color: var(--muted);
     font-size: 14px;
     padding: 40px 0;
     text-align: center;
@@ -1313,7 +1436,7 @@ BOARD_HTML = r"""<!DOCTYPE html>
     text-align: left;
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
-    color: var(--text-muted);
+    color: var(--muted);
     font-weight: 500;
     white-space: nowrap;
   }
@@ -1326,11 +1449,11 @@ BOARD_HTML = r"""<!DOCTYPE html>
   .health-table tr:last-child td { border-bottom: none; }
   .health-table tr:hover td { background: rgba(255,255,255,.02); }
   .health-num { text-align: right; }
-  .health-zero { color: var(--text-muted); }
+  .health-zero { color: var(--muted); }
   .health-section-title {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: .06em;
     margin: 24px 0 10px;
@@ -1347,15 +1470,113 @@ BOARD_HTML = r"""<!DOCTYPE html>
     border-radius: 20px;
     padding: 4px 12px;
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--muted);
   }
   .health-filter-pill strong { color: var(--text); }
+
+  .health-hero {
+    background:
+      radial-gradient(circle at top left, rgba(124,106,245,.18), transparent 34%),
+      radial-gradient(circle at top right, rgba(99,170,223,.14), transparent 28%),
+      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0));
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 24px;
+    margin-bottom: 18px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.26);
+  }
+  .health-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .health-summary-card {
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+    padding: 16px 18px;
+    min-height: 96px;
+  }
+  .health-summary-label {
+    color: #a4a1b8;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .health-summary-value {
+    color: var(--text);
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .health-summary-foot {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .health-panel {
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.01));
+    padding: 18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .health-table th {
+    background: rgba(255,255,255,.02);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .skip-shell {
+    background:
+      radial-gradient(circle at top left, rgba(245,158,11,.09), transparent 28%),
+      linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,0));
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 24px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.26);
+  }
+  .skip-meta-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    margin-bottom: 12px;
+  }
+  .skip-reason {
+    border: 1px solid rgba(255,255,255,.04);
+    background: rgba(255,255,255,.03);
+  }
+  .skip-actions {
+    justify-content: flex-start;
+    padding-top: 2px;
+  }
+
+  @media (max-width: 1100px) {
+    .health-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero-top { flex-direction: column; }
+    .hero-timestamp { text-align: left; min-width: 0; }
+    .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .board-toolbar { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 720px) {
+    .dashboard-shell { padding: 18px 16px 28px; }
+    .hero { padding: 20px; border-radius: 20px; }
+    .hero-title { font-size: 28px; }
+    .kpi-grid,
+    .board-toolbar { grid-template-columns: 1fr; }
+  }
+
 </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">Job Search <span>Board</span></div>
+  <div class="logo">The Job Search <span>Autopilot</span></div>
   <div class="header-stats" id="header-stats">
     <div class="stat-chip">
       <div class="stat-dot" style="background:var(--accent)"></div>
@@ -1389,7 +1610,7 @@ BOARD_HTML = r"""<!DOCTYPE html>
     <button class="undo-btn" id="undo-btn" onclick="undoLastDelete()" title="Restore the last deleted job">
       ↩ Undo delete
     </button>
-    <div class="last-updated" id="last-updated"></div>
+    <div class="last-updated" id="last-updated">Last sync —</div>
   </div>
 </header>
 
@@ -1426,6 +1647,81 @@ let lastRejectedId  = null;  // tracks last deleted job for persistent undo
 let currentTab      = 'board';
 const COLUMNS    = ['Reviewing', 'Applied', 'Interviewing'];
 
+
+const boardFilters = {
+  search: '',
+  tier: 'all',
+  flagged: 'all',
+  sort: 'newest',
+};
+
+function setBoardFilter(key, value) {
+  boardFilters[key] = value;
+  if (boardData) renderBoard(boardData);
+}
+
+function applyBoardFilters(data) {
+  const filtered = { columns: {} };
+  for (const col of COLUMNS) {
+    let cards = [...(data.columns[col] || [])];
+
+    if (boardFilters.search) {
+      const needle = boardFilters.search.trim().toLowerCase();
+      cards = cards.filter(job => [job.title, job.company, job.location, job.reason, job.source]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(needle)));
+    }
+
+    if (boardFilters.tier !== 'all') {
+      cards = cards.filter(job => job.tier === boardFilters.tier);
+    }
+
+    if (boardFilters.flagged === 'flagged') {
+      cards = cards.filter(job => !!job.flagged);
+    } else if (boardFilters.flagged === 'unflagged') {
+      cards = cards.filter(job => !job.flagged);
+    }
+
+    cards.sort((a, b) => compareJobs(a, b, boardFilters.sort));
+    filtered.columns[col] = cards;
+  }
+  return filtered;
+}
+
+function compareJobs(a, b, mode) {
+  if (mode === 'company') {
+    return String(a.company || '').localeCompare(String(b.company || ''));
+  }
+  if (mode === 'salary') {
+    return extractSalaryRank(b) - extractSalaryRank(a);
+  }
+  return parseDateForSort(b.date_found) - parseDateForSort(a.date_found);
+}
+
+function extractSalaryRank(job) {
+  const raw = String(job.salary_display || '').replace(/,/g, '');
+  const nums = raw.match(/\d+(?:\.\d+)?/g);
+  if (!nums || !nums.length) return -1;
+  return Math.max(...nums.map(Number));
+}
+
+function parseDateForSort(value) {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  if (!Number.isNaN(parsed)) return parsed;
+  const rel = String(value).match(/(\d+)\s+(day|days|hour|hours|minute|minutes|week|weeks)/i);
+  if (!rel) return 0;
+  const amount = Number(rel[1]);
+  const unit = rel[2].toLowerCase();
+  const now = Date.now();
+  const mult = unit.startsWith('minute') ? 60 * 1000
+    : unit.startsWith('hour') ? 60 * 60 * 1000
+    : unit.startsWith('week') ? 7 * 24 * 60 * 60 * 1000
+    : 24 * 60 * 60 * 1000;
+  return now - (amount * mult);
+}
+
+
 // ── Tab switching ──────────────────────────────────────────────────────────────
 function showTab(tab) {
   currentTab = tab;
@@ -1449,7 +1745,7 @@ async function loadBoard() {
     boardData  = data;
     renderBoard(data);
     updateStats(data);
-    document.getElementById('last-updated').textContent = 'Updated ' + data.last_updated;
+    document.getElementById('last-updated').textContent = 'Last sync ' + data.last_updated;
   } catch (e) {
     document.getElementById('app').innerHTML =
       '<div class="loading" style="color:#e05a5a">Failed to load board — is dashboard.py running?</div>';
@@ -1465,7 +1761,7 @@ async function loadSkipped() {
     const data = await res.json();
     skippedData = data;
     renderSkipped(data);
-    document.getElementById('last-updated').textContent = 'Updated ' + data.last_updated;
+    document.getElementById('last-updated').textContent = 'Last sync ' + data.last_updated;
     document.getElementById('badge-skipped').textContent = data.total;
     document.getElementById('count-skipped').textContent = data.total;
   } catch(e) {
@@ -1478,82 +1774,84 @@ function renderSkipped(data) {
   const app = document.getElementById('app');
   if (!data.jobs || data.jobs.length === 0) {
     app.innerHTML = `
-      <div class="skipped-view">
-        <div class="skipped-header">
-          <div>
-            <div class="skipped-title">Skipped Jobs</div>
-            <div class="skipped-subtitle">Jobs the radar filtered out automatically</div>
+      <div class="dashboard-shell">
+        <div class="skipped-view">
+          <div class="skip-shell">
+            <div class="skipped-header">
+              <div>
+                <div class="eyebrow" style="margin-bottom:12px;background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.28);color:#f6c56f;">Skipped queue</div>
+                <div class="skipped-title">Skipped Jobs</div>
+                <div class="skipped-subtitle">Jobs the radar filtered out automatically</div>
+              </div>
+            </div>
+            <div class="empty-state">No skipped jobs yet — they'll appear after your next radar run.</div>
           </div>
         </div>
-        <div class="empty-state">No skipped jobs yet — they'll appear after your next radar run.</div>
       </div>`;
     return;
   }
 
   let html = `
-    <div class="skipped-view">
-      <div class="skipped-header">
-        <div>
-          <div class="skipped-title">Skipped Jobs</div>
-          <div class="skipped-subtitle">${data.total} job${data.total !== 1 ? 's' : ''} filtered out automatically — review if anything looks wrong</div>
-        </div>
-      </div>
-      <div class="skipped-list">`;
+    <div class="dashboard-shell">
+      <div class="skipped-view">
+        <div class="skip-shell">
+          <div class="skipped-header">
+            <div>
+              <div class="eyebrow" style="margin-bottom:12px;background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.28);color:#f6c56f;">Skipped queue</div>
+              <div class="skipped-title">Skipped Jobs</div>
+              <div class="skipped-subtitle">${data.total} job${data.total !== 1 ? 's' : ''} filtered out automatically — audit edge cases before they disappear for good</div>
+            </div>
+          </div>
+          <div class="skipped-list">`;
 
-  // Fix 3: Store job data in a module-level Map keyed by cardId.
-  // This avoids embedding JSON in inline onclick attributes, which breaks when
-  // job titles or reasons contain single quotes, double quotes, or parentheses.
-  // FIX (code review): clear stale entries before each render to prevent unbounded growth.
   _skipJobMap.clear();
   for (const job of data.jobs) {
     const cardId    = job.id.replace(/[^a-zA-Z0-9]/g, '-');
     const isFlagged = job.flagged;
-    _skipJobMap.set(cardId, job);  // safe reference, no serialisation in HTML
+    _skipJobMap.set(cardId, job);
+    const salaryPill = job.salary_display ? `<span class="meta-pill salary-pill">💰 ${escHtml(job.salary_display)}</span>` : '';
+    const sourcePill = job.source ? `<span class="meta-pill">${escHtml(job.source)}</span>` : '';
+    const datePill = job.date_found ? `<span class="meta-pill">${escHtml(job.date_found)}</span>` : '';
 
     html += `
       <div class="skip-card ${isFlagged ? 'flagged-card' : ''}" id="skipcard-${cardId}" data-job-id="${escHtml(job.id)}">
         <div class="skip-card-top">
           <div class="skip-card-info">
             <div class="skip-card-title">${escHtml(job.title)}</div>
-            <div class="skip-card-company">${escHtml(job.company)}${job.location ? ' · ' + escHtml(job.location) : ''}${job.date_found ? ' · ' + job.date_found : ''}</div>
+            <div class="skip-card-company">${escHtml(job.company)}${job.location ? ' · ' + escHtml(job.location) : ''}</div>
+            <div class="skip-meta-row">
+              ${salaryPill}
+              ${sourcePill}
+              ${datePill}
+              ${isFlagged ? '<span class="meta-pill flagged-pill">🚩 Flagged for review</span>' : ''}
+            </div>
           </div>
-          ${isFlagged ? '<span class="meta-pill flagged-pill">🚩 Flagged for review</span>' : ''}
         </div>
-        <div class="skip-reason">${escHtml(job.reason)}</div>
+        <div class="skip-reason">${escHtml(job.reason || 'No reason recorded.')}</div>
         <div class="skip-actions">
           ${job.url
-            // Fix 2: URL stored in data-url attribute, never injected into onclick string.
-            // openLinkSafe() reads it back via dataset — safe against quotes in URLs.
             ? `<button class="btn btn-link" data-url="${escHtml(job.url)}" onclick="openLinkSafe(this)">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 View job</button>`
             : ''}
-          <button class="btn btn-success" onclick="restoreJob(this, '${cardId}')">
-            ✓ Add to Reviewing
-          </button>
-          <button class="btn ${isFlagged ? 'btn-flag flagged' : 'btn-flag'}"
-            onclick="toggleFlagPanel('${cardId}')">
-            🚩 ${isFlagged ? 'Flagged' : 'Flag for Review'}
-          </button>
+          <button class="btn btn-success" onclick="restoreJob(this, '${cardId}')">✓ Add to Reviewing</button>
+          <button class="btn ${isFlagged ? 'btn-flag flagged' : 'btn-flag'}" onclick="toggleFlagPanel('${cardId}')">🚩 ${isFlagged ? 'Flagged' : 'Flag for Review'}</button>
           <button class="btn btn-danger" onclick="dismissSkip(this, '${cardId}')" title="Hide permanently">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
           </button>
         </div>
         <div class="flag-panel ${isFlagged ? 'open' : ''}" id="flagpanel-${cardId}">
           <div class="flag-panel-label">🚩 Why should this be included?</div>
-          <textarea class="flag-note-area" id="flagnote-${cardId}"
-            placeholder="Add a note for Claude — e.g. 'This is post-origination servicing, not underwriting'"></textarea>
+          <textarea class="flag-note-area" id="flagnote-${cardId}" placeholder="Add a note for Claude — e.g. 'This is post-origination servicing, not underwriting'"></textarea>
           <div class="flag-panel-actions">
-            <button class="btn btn-flag" onclick="submitFlag(this, '${cardId}')">
-              Submit Flag
-            </button>
+            <button class="btn btn-flag" onclick="submitFlag(this, '${cardId}')">Submit Flag</button>
             <button class="btn" onclick="toggleFlagPanel('${cardId}')">Cancel</button>
           </div>
         </div>
       </div>`;
   }
 
-  html += '</div></div>';
+  html += '</div></div></div></div>';
   app.innerHTML = html;
 }
 
@@ -1578,42 +1876,45 @@ function renderHealth(data) {
   const app = document.getElementById('app');
   if (!data.runs || data.runs.length === 0) {
     app.innerHTML = `
-      <div class="health-view">
-        <div class="health-header">
-          <div class="health-title">Radar Health</div>
-          <div class="health-subtitle">Run history and source stats</div>
+      <div class="dashboard-shell">
+        <div class="health-view">
+          <div class="health-hero">
+            <div class="health-header">
+              <div class="eyebrow" style="margin-bottom:12px;">Radar operations</div>
+              <div class="health-title">Autopilot Health</div>
+              <div class="health-subtitle">Run history, source coverage, and filter pressure</div>
+            </div>
+            <div class="health-no-data">No runs recorded yet — the DB is created after the first radar run.</div>
+          </div>
         </div>
-        <div class="health-no-data">No runs recorded yet — the DB is created after the first radar run.</div>
       </div>`;
     return;
   }
 
   const sources = data.sources || [];
+  const latest = data.runs[0] || {};
+  const avgDuration = Math.round(data.runs.reduce((sum, run) => {
+    if (!run.started_at || !run.finished_at) return sum;
+    const delta = (new Date(run.finished_at) - new Date(run.started_at)) / 1000;
+    return sum + (Number.isFinite(delta) ? delta : 0);
+  }, 0) / Math.max(1, data.runs.filter(r => r.started_at && r.finished_at).length));
+  const totalRaw = data.runs.reduce((sum, run) => sum + (run.total_raw || 0), 0);
+  const totalNew = data.runs.reduce((sum, run) => sum + (run.total_new || 0), 0);
 
-  // Build source columns header
-  const sourceHeaders = sources.map(s =>
-    `<th class="health-num">${escHtml(s)}</th>`
-  ).join('');
+  const sourceHeaders = sources.map(s => `<th class="health-num">${escHtml(s)}</th>`).join('');
 
-  // Build run rows
   const rows = data.runs.map(run => {
-    const date    = run.started_at ? run.started_at.slice(0, 16).replace('T', ' ') : '—';
-    const dur     = (run.started_at && run.finished_at)
+    const date = run.started_at ? run.started_at.slice(0, 16).replace('T', ' ') : '—';
+    const dur = (run.started_at && run.finished_at)
       ? Math.round((new Date(run.finished_at) - new Date(run.started_at)) / 1000) + 's'
       : '—';
-
-    // Map source name -> raw count for this run
     const srcMap = {};
     (run.sources || []).forEach(s => { srcMap[s.source] = s.raw_count; });
-
     const sourceCells = sources.map(s => {
       const n = srcMap[s] || 0;
       return `<td class="health-num ${n === 0 ? 'health-zero' : ''}">${n}</td>`;
     }).join('');
-
-    // Filter summary for tooltip
     const filterSummary = (run.filters || []).map(f => `${f.reason}: ${f.count}`).join(' | ') || 'none';
-
     return `<tr title="Filtered: ${escHtml(filterSummary)}">
       <td>${escHtml(date)}</td>
       <td class="health-num">${run.total_raw || 0}</td>
@@ -1624,7 +1925,6 @@ function renderHealth(data) {
     </tr>`;
   }).join('');
 
-  // Aggregate filter stats across all runs for summary pills
   const filterTotals = {};
   data.runs.forEach(run => {
     (run.filters || []).forEach(f => {
@@ -1637,30 +1937,60 @@ function renderHealth(data) {
     .join('');
 
   app.innerHTML = `
-    <div class="health-view">
-      <div class="health-header">
-        <div class="health-title">Radar Health</div>
-        <div class="health-subtitle">Last ${data.runs.length} runs · hover a row to see filter breakdown</div>
-      </div>
+    <div class="dashboard-shell">
+      <div class="health-view">
+        <div class="health-hero">
+          <div class="health-header">
+            <div class="eyebrow" style="margin-bottom:12px;">Radar operations</div>
+            <div class="health-title">Autopilot Health</div>
+            <div class="health-subtitle">Last ${data.runs.length} runs · autopilot performance and filtering behavior at a glance</div>
+          </div>
+          <div class="health-summary-grid">
+            <div class="health-summary-card">
+              <div class="health-summary-label">Latest run</div>
+              <div class="health-summary-value">${latest.total_new || 0}</div>
+              <div class="health-summary-foot">new jobs from ${latest.total_raw || 0} raw findings</div>
+            </div>
+            <div class="health-summary-card">
+              <div class="health-summary-label">Average duration</div>
+              <div class="health-summary-value">${Number.isFinite(avgDuration) ? avgDuration : 0}s</div>
+              <div class="health-summary-foot">based on completed runs</div>
+            </div>
+            <div class="health-summary-card">
+              <div class="health-summary-label">Sources tracked</div>
+              <div class="health-summary-value">${sources.length}</div>
+              <div class="health-summary-foot">unique upstream feeds in history</div>
+            </div>
+            <div class="health-summary-card">
+              <div class="health-summary-label">Total volume</div>
+              <div class="health-summary-value">${totalNew}</div>
+              <div class="health-summary-foot">new jobs from ${totalRaw} raw results</div>
+            </div>
+          </div>
+        </div>
 
-      <div class="health-table-wrap">
-        <table class="health-table">
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th class="health-num">Raw</th>
-              <th class="health-num">New</th>
-              <th class="health-num">Rated</th>
-              <th>Duration</th>
-              ${sourceHeaders}
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
+        <div class="health-panel">
+          <div class="health-section-title">Run history</div>
+          <div class="health-table-wrap">
+            <table class="health-table">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th class="health-num">Raw</th>
+                  <th class="health-num">New</th>
+                  <th class="health-num">Rated</th>
+                  <th>Duration</th>
+                  ${sourceHeaders}
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
 
-      <div class="health-section-title">Filter totals (all runs)</div>
-      <div class="health-filter-grid">${filterPills || '<span style="color:var(--text-muted);font-size:13px">No filter data yet</span>'}</div>
+          <div class="health-section-title">Filter totals (all runs)</div>
+          <div class="health-filter-grid">${filterPills || '<span style="color:var(--muted);font-size:13px">No filter data yet</span>'}</div>
+        </div>
+      </div>
     </div>`;
 }
 
@@ -1783,10 +2113,76 @@ function updateSkippedBadge(delta) {
 // ── Board render ───────────────────────────────────────────────────────────────
 function renderBoard(data) {
   const board = document.getElementById('app');
-  // FIX (code review): clear stale entries from previous render so dismissed/
-  // rejected jobs don't linger in the map and cause memory growth over time.
   _boardJobMap.clear();
-  let html = '<div class="board">';
+
+  const filteredData = applyBoardFilters(data);
+  const counts = {
+    reviewing: (data.columns['Reviewing'] || []).length,
+    applied: (data.columns['Applied'] || []).length,
+    interviewing: (data.columns['Interviewing'] || []).length,
+    skipped: Number(document.getElementById('count-skipped')?.textContent || 0),
+  };
+
+  let html = `
+    <div class="dashboard-shell">
+      <section class="hero">
+        <div class="hero-top">
+          <div class="hero-copy">
+            <div class="eyebrow">Daily job triage command center</div>
+            <div class="hero-title">The Job Search Autopilot</div>
+            <div class="hero-subtitle">Track fresh opportunities, move candidates through your pipeline, and surface edge cases before they waste your time.</div>
+          </div>
+          <div class="hero-timestamp">
+            Dashboard status
+            <strong>${escHtml(data.last_updated || 'Just now')}</strong>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card" style="--kpi-accent: var(--accent)">
+            <div class="kpi-label">Reviewing</div>
+            <div class="kpi-value">${counts.reviewing}</div>
+            <div class="kpi-foot">Fresh jobs waiting for a decision</div>
+          </div>
+          <div class="kpi-card" style="--kpi-accent: var(--good)">
+            <div class="kpi-label">Applied</div>
+            <div class="kpi-value">${counts.applied}</div>
+            <div class="kpi-foot">Applications already in flight</div>
+          </div>
+          <div class="kpi-card" style="--kpi-accent: var(--interview)">
+            <div class="kpi-label">Interviewing</div>
+            <div class="kpi-value">${counts.interviewing}</div>
+            <div class="kpi-foot">Active interview loops underway</div>
+          </div>
+          <div class="kpi-card" style="--kpi-accent: var(--skipped)">
+            <div class="kpi-label">Skipped</div>
+            <div class="kpi-value">${counts.skipped}</div>
+            <div class="kpi-foot">Auto-filtered roles saved for audit</div>
+          </div>
+        </div>
+
+        <div class="board-toolbar">
+          <input class="toolbar-field" id="board-search" type="text" placeholder="Search jobs, companies, locations, or reasons" value="${escHtml(boardFilters.search)}" oninput="setBoardFilter('search', this.value)">
+          <select class="toolbar-select" id="board-tier" onchange="setBoardFilter('tier', this.value)">
+            <option value="all" ${boardFilters.tier === 'all' ? 'selected' : ''}>Tier: All</option>
+            <option value="Perfect Fit" ${boardFilters.tier === 'Perfect Fit' ? 'selected' : ''}>Tier: Perfect Fit</option>
+            <option value="Good Fit" ${boardFilters.tier === 'Good Fit' ? 'selected' : ''}>Tier: Good Fit</option>
+            <option value="Worth a Look" ${boardFilters.tier === 'Worth a Look' ? 'selected' : ''}>Tier: Worth a Look</option>
+          </select>
+          <select class="toolbar-select" id="board-flagged" onchange="setBoardFilter('flagged', this.value)">
+            <option value="all" ${boardFilters.flagged === 'all' ? 'selected' : ''}>Flagged: All</option>
+            <option value="flagged" ${boardFilters.flagged === 'flagged' ? 'selected' : ''}>Flagged only</option>
+            <option value="unflagged" ${boardFilters.flagged === 'unflagged' ? 'selected' : ''}>Unflagged only</option>
+          </select>
+          <select class="toolbar-select" id="board-sort" onchange="setBoardFilter('sort', this.value)">
+            <option value="newest" ${boardFilters.sort === 'newest' ? 'selected' : ''}>Sort: Newest</option>
+            <option value="salary" ${boardFilters.sort === 'salary' ? 'selected' : ''}>Sort: Highest salary</option>
+            <option value="company" ${boardFilters.sort === 'company' ? 'selected' : ''}>Sort: Company A–Z</option>
+          </select>
+        </div>
+      </section>
+
+      <div class="board">`;
 
   const colMeta = {
     'Reviewing':    { accent: 'reviewing-accent',     label: 'Reviewing' },
@@ -1795,7 +2191,7 @@ function renderBoard(data) {
   };
 
   for (const col of COLUMNS) {
-    const cards = data.columns[col] || [];
+    const cards = filteredData.columns[col] || [];
     const meta  = colMeta[col];
 
     html += `
@@ -1810,7 +2206,7 @@ function renderBoard(data) {
         <div class="cards" id="cards-${col}">`;
 
     if (cards.length === 0) {
-      html += `<div class="empty-state">No jobs here yet</div>`;
+      html += `<div class="empty-state">No matching jobs in this lane</div>`;
     } else {
       for (const job of cards) {
         html += renderCard(job, col);
@@ -1820,9 +2216,8 @@ function renderBoard(data) {
     html += `</div></div>`;
   }
 
-  html += '</div>';
+  html += '</div></div>';
   board.innerHTML = html;
-
 }
 
 function tierClass(tier) {
@@ -2133,4 +2528,4 @@ if __name__ == "__main__":
     print("  ─────────────────────────────────────────")
     print("  Open http://localhost:5000 in your browser")
     print("  Press Ctrl+C to stop\n")
-    app.run(debug=False, port=5000)
+    app.run(debug=False, host="127.0.0.1", port=5000, threaded=False)
