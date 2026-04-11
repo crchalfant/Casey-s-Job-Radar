@@ -534,7 +534,7 @@ def api_flag():
                 "url":        job_data.get("url", ""),
                 "reason":     job_data.get("reason", ""),
                 "date_found": job_data.get("date_found", ""),
-                "casey_note": note,
+                "user_note": note,
                 "flagged_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             })
             os.makedirs(JOBS_DIR, exist_ok=True)
