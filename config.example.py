@@ -20,7 +20,7 @@ Required environment variables (set in .env or system environment):
 from datetime import date
 
 # ── SALARY FLOOR ──────────────────────────────────────────────────────────────
-MIN_SALARY = Your Mininum  # set this to your minimum acceptable annual salary
+MIN_SALARY = 100000  # set this to your minimum acceptable annual salary
 
 # ── VACATION MODE ─────────────────────────────────────────────────────────────
 # Jobs are buffered during [VACATION_START, VACATION_END) and a single digest
@@ -54,12 +54,12 @@ Core strengths:
 - [Strength 3]
 """
 
-# ── LOCAL METRO TERMS ─────────────────────────────────────────────────────────
+# ── LOCAL METRO TERMS ────────────────────────────────────────────────────────
 # City and suburb names for your commutable area. Jobs requiring on-site
 # attendance outside this set are filtered out automatically.
 # Replace with your own city and surrounding suburbs.
-# Variable must be named RALEIGH_TERMS — this name is used in job_radar.py.
-RALEIGH_TERMS = {
+# Variable must be named LOCAL_METRO_TERMS — this name is used in job_radar.py.
+LOCAL_METRO_TERMS = {
     "your city",
     "nearby suburb 1",
     "nearby suburb 2",
