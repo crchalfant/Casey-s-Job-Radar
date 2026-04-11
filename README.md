@@ -111,7 +111,11 @@ The fastest way to personalise it is to **upload the files directly into Claude 
 
 > *"The rating prompt is generic. I'm a UX designer targeting senior design roles. Can you rewrite the tier definitions for my situation?"*
 
+> *"I ran the radar and got this error: [paste the full error message and the last few lines of console output before it]. Here is the relevant section of job_radar.py: [paste the section]. What is wrong and how do I fix it?"*
+
 The `SETUP.txt` file has more detailed prompts for each specific part — start there if you want step-by-step guidance.
+
+**Debugging tip:** If something breaks, the full error message plus the last 20 lines of console output is almost always enough context for Claude or ChatGPT to diagnose and fix the problem. You don't need to understand the error yourself — just paste it in and describe what you were trying to do when it happened.
 
 ## What you can customise
 
