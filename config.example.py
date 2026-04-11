@@ -20,7 +20,7 @@ Required environment variables (set in .env or system environment):
 from datetime import date
 
 # ── SALARY FLOOR ──────────────────────────────────────────────────────────────
-MIN_SALARY = 150000  # jobs with confirmed salary below this are filtered out
+MIN_SALARY = 100000  # set this to your minimum acceptable annual salary
 
 # ── VACATION MODE ─────────────────────────────────────────────────────────────
 # Jobs are buffered during [VACATION_START, VACATION_END) and a single digest
@@ -40,7 +40,7 @@ Target roles: Senior Product Manager, Senior Product Owner, Lead/Principal PM,
               AVP Product, Director of Product (IC), Senior Business Analyst,
               Customer Experience Manager
 
-Target salary: $xxxx
+Target salary: $[YOUR_SALARY]+
 Location: Remote (nationwide) OR on-site/hybrid in [Your City] area only
 """
 
