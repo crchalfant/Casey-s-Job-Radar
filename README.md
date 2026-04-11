@@ -109,7 +109,7 @@ The `SETUP.txt` file has more detailed prompts for each specific part of the too
 
 **`PROFILE`** — the most important thing to personalise. Claude reads this when rating every single job. Write it like a concise professional summary: your current role, your background, what you are targeting, your strengths, and your hard constraints (location, salary, types of work you won't do). The more specific you are, the better the ratings.
 
-**`MIN_SALARY`** — your salary floor as a plain number (e.g. `150000`). Jobs with a confirmed range entirely below this are filtered before Claude sees them. Jobs with no salary listed always pass through.
+**`MIN_SALARY`** — your salary floor as a plain number (e.g. `100000` for $100K). Jobs with a confirmed range entirely below this are filtered before Claude sees them. Jobs with no salary listed always pass through.
 
 **`RALEIGH_TERMS`** — replace this with your own city and surrounding suburb names. The radar uses this list to identify local hybrid and onsite roles and show them in a separate section of your email digest. Leave it empty if you only want remote roles.
 
