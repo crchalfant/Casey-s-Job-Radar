@@ -58,10 +58,10 @@ CHANGELOG (reverse chronological)
   2026-03-18 - Session 5: Bug fixes from live testing
     - salary_ok() bug fix: was using salary_min to check against MIN_SALARY floor.
       For a range like $140K-$180K this set sal=140K and dropped the job even though
-      $150K falls within the range. Fixed to use salary_max when both fields are set,
-      so a job only gets dropped if the ENTIRE range is confirmed below $150K.
+      MIN_SALARY falls within the range. Fixed to use salary_max when both fields are set,
+      so a job only gets dropped if the ENTIRE range is confirmed below MIN_SALARY.
     - Also clarified Claude prompt rule: skip only when the TOP of the range is below
-      $150K, not when the bottom is.
+      MIN_SALARY, not when the bottom is.
     - FutureWarning fix: [---to] in _SALARY_CONTEXT_RE (em-dash cleanup artifact)
       turned [--to] into [---to] which Python 3.12 treats as ambiguous set difference.
       Fixed to [-to].
@@ -125,7 +125,6 @@ CHANGELOG (reverse chronological)
       employerdirecthealthcare, anchorage, entersekt, versapay, aledade,
       redventures, atbayjobs, federato, sureify, ethoslife, kapitus, BestEgg,
       spreedly, truv, sparkadvisors, deepintent, modernhealth, oportun, etc.
-    - forbrightbank: confirmed correct Lever slug (forbright-bank was 404)
     - ATS_NAME_OVERRIDES: added display name corrections for all new slugs
     - 133-slug clean sweep: all confirmed live before each deployment
 
@@ -368,7 +367,6 @@ ATS_NAME_OVERRIDES = {
     "Jerry.ai":        "Jerry",
     "varomoney":       "Varo Bank",
     "monzo":           "Monzo",
-    "forbrightbank":   "Forbright Bank",
     "tilthq":          "Tilt",
     "galileofinancialtechnologies": "Galileo Financial Technologies",
     "employerdirecthealthcare": "Employer Direct Healthcare",
@@ -1045,12 +1043,12 @@ def is_category_page(job):
 
 def _parse_salary_string(s):
     """
-    Converts salary strings like '$120K', '$120,000', '$120k-$150k' to a number.
+    Converts salary strings like '$120K', '$120,000', '$120k-$160k' to a number.
     Returns the UPPER bound of a range (or single value if no range), so salary_ok
     can correctly check whether the range reaches MIN_SALARY.
 
     BUG FIX: original returned the first (lower) number. For "$123,000 - $163,000"
-    this gave 123,000, dropping the job even though the max $163K clears $150K.
+    this gave 123,000, dropping the job even though the max $163K clears MIN_SALARY.
     Now returns the max value found, matching the salary_max logic in salary_ok.
 
     Returns 0 (no salary info - let it through) for:
@@ -1090,10 +1088,10 @@ def salary_ok(job):
 
     BUG FIX: original code used salary_min as the check value. For a range like
     $140K-$180K this gave sal=140K and incorrectly dropped the job even though
-    $150K (MIN_SALARY) falls within the range. Correct logic:
+    MIN_SALARY falls within the range. Correct logic:
       - If salary_max is set: check salary_max >= MIN_SALARY (range reaches the floor)
       - If only salary_min (no max): pass through - we cannot confirm the ceiling
-        is below $150K, and a single low min may just be the base of an unlisted range
+        is below MIN_SALARY, and a single low min may just be the base of an unlisted range
       - String salary (e.g. "$140K" with no range): this is likely a specific figure,
         so check it directly against MIN_SALARY
       - No salary data: always pass
@@ -1623,13 +1621,13 @@ def search_linkedin():
         jobs.extend(results)
         print(f"  LinkedIn remote ({q}): {len(results)} results")
 
-    # Raleigh local searches - use a North Carolina geoId
+    # Local metro searches - use the LinkedIn geoId for your region
     # geoId 103644278 = United States, but LinkedIn will filter by keyword location
     for q in raleigh_queries:
         time.sleep(1.5)
         results = _li_fetch(q, remote=False)
-        # Filter to only NC results - "rtp" excluded (ambiguous with Real-Time Payments)
-        # FIX: use RALEIGH_TERMS from config.py so local filter stays in sync
+        # Filter to only local metro results
+        # Use RALEIGH_TERMS from config.py so local filter stays in sync with your metro
         filtered = [j for j in results if any(t in j.get("location", "").lower() for t in RALEIGH_TERMS)]
         jobs.extend(filtered)
         print(f"  LinkedIn Raleigh ({q}): {len(filtered)} results")
@@ -1866,8 +1864,7 @@ def search_ats_companies():
         "tilthq",  # Tilt credit-building app; Ashby confirmed
         "greenlight", "gohenry",
         "daylight",
-        "forbrightbank",  # Lever confirmed slug (forbright-bank and forbright both 404)
-        "chime",
+            "chime",
         # ── Payments ─────────────────────────────────────────────────────────
         "stripe", "marqeta", "lithic", "highnote",
         "dwolla",
@@ -1902,7 +1899,7 @@ def search_ats_companies():
         "middesk", "parafin",
         "capchase", "clearco",
         "drivewealth",         "leadbank",
-        "pathward",  # banking-as-a-service; Greenhouse slug; all posted roles below $150K
+        "pathward",  # banking-as-a-service; Greenhouse slug; roles typically below market
         "checkr",  # background checks; Greenhouse slug; all PM roles Denver/SF on-site
         "lendingtree",  # fintech marketplace; Greenhouse slug; all roles Seattle/Denver on-site
         "whoop",  # wearables; Lever slug; all PM roles Boston on-site
@@ -2199,7 +2196,7 @@ _ULTIPRO_COMPANIES = {
     # ── Added 2026-04-02 — confirmed active PM/PO roles and remote eligibility ─
     "UNI1046UFMB/d8f90aad-672e-4f0a-bbc1-a17aa8cf1111": "Atlantic Union Bank",
     # Atlantic Union Bank: $20B+ regional bank headquartered in VA; posts remote
-    # digital PM/PO roles eligible in NC, VA, MD, PA, GA. NC is in Casey's metro.
+    # digital PM/PO roles eligible across multiple states — adjust to your region
     # Confirmed: "Digital Product Manager" and "Digital Product Owner III" remote roles.
     "TEG1001TEGR/ad4204e8-c7f7-47f1-8177-c9f64730dccc": "InvestCloud",
     # InvestCloud: wealth management fintech platform; confirmed active PM role on
@@ -2712,7 +2709,7 @@ Description: {full_desc[:6000]}{salary_hint}
 Return ONLY a JSON object with exactly these three fields:
   "tier": one of exactly these four strings: "Perfect Fit", "Good Fit", "Worth a Look", "Skip"
   "reason": one sentence explaining the rating (mention the key match or the key gap)
-  "salary": the salary range exactly as stated in the description (e.g. "$150,000-$180,000", "$160K", "up to $175K") - use null if no salary is mentioned anywhere in the description
+  "salary": the salary range exactly as stated in the description (e.g. "$120,000-$160,000", "$140K", "up to $175K") - use null if no salary is mentioned anywhere in the description
 
 Tier guide:
 "Perfect Fit"  = 90-100% match. PM, PO, or BA role that aligns with the candidate's target domain and seniority. Right level, right domain, no hard disqualifiers. This is the strongest match category.
@@ -2723,7 +2720,7 @@ Tier guide:
   - On-site or hybrid with required office attendance OUTSIDE the candidate's local metro area. Read carefully - if the description says "hybrid" or "in-person" or "on-site" and the location is outside the target metro, Skip it. But if the description says "remote" as the primary arrangement and mentions in-person as optional or occasional, do NOT skip it. IMPORTANT: If the word "Remote" appears in the job TITLE itself (e.g., "Senior PM (Remote)", "Remote - Senior PM"), treat the role as remote regardless of what the Location field shows. Job boards like Adzuna often populate Location with the company's registered office address even for fully remote roles.
   - Staffing agency or contract-to-hire placement. Skip any role posted by a recruiting or staffing firm (Kforce, CyberCoders, Avenue Code, 1872 Consulting, Robert Half, Insight Global, Randstad, TEKsystems, etc.) OR any role explicitly described as contract, temp, or C2H regardless of who posts it.
   - Credit risk, underwriting, or loan origination as the PRIMARY function. IMPORTANT: "Servicing" and "collections" after origination (account management, payment plans, customer support for existing accounts) are NOT the same as origination or underwriting. Post-origination servicing is a valid target - do NOT skip it. Only skip if the role is about evaluating creditworthiness, approving loans, or originating new credit.
-  - Compensation range is entirely below $150K (i.e. the TOP of the posted range is below $150K). A range like $140K-$180K or $120K-$155K should NOT be skipped - $150K falls within both those ranges. Only skip if the maximum listed salary is confirmed below $150K.
+  - Compensation range is entirely below MIN_SALARY (i.e. the TOP of the posted range is below your floor). A range like $140K-$180K should NOT be skipped — MIN_SALARY falls within that range. Only skip if the maximum listed salary is confirmed below your floor.
   - Crypto, blockchain, or web3 as core product focus
   - AI product building as the PRIMARY function. Skip if: the company's core product IS an AI platform/tool, or the role's primary focus is owning/building AI features, AI roadmap, or AI-powered products. Examples of Skip: "own our AI assistant roadmap", "build LLM-powered features", "lead AI product strategy for our platform", "PM for our machine learning products". Do NOT skip if: AI is mentioned only as a tool the team uses internally, or the role is a standard PM role at a company that happens to use AI.
   - Non-US remote role - if a company is headquartered outside the US and the description does not explicitly state the role is open to US-based remote candidates, Skip it. European, Baltic, and UK banks hiring remotely are typically hiring within their own region.
@@ -2739,7 +2736,7 @@ CRITICAL RATING RULES - these override everything else:
 3. An incomplete or short job description is NEVER a reason to Skip. If the title fits and there are no confirmed hard disqualifiers, rate it Worth a Look or higher.
 4. "Cannot assess" or "impossible to evaluate" are NOT valid reasons to Skip. When in doubt, rate Worth a Look so the candidate can decide.
 5. Only Skip when you can CONFIRM a hard disqualifier is present - not when you merely suspect one might exist.
-6. CONSISTENCY RULE: If your reason sentence identifies a confirmed hard disqualifier (on-site outside Raleigh, explicit people management required, crypto/blockchain, salary below $150K, AI product building as primary, non-US location), your tier MUST be "Skip". Never return "Worth a Look" or "Good Fit" in the same response where you have confirmed a hard disqualifier. The reason and tier must agree.
+6. CONSISTENCY RULE: If your reason sentence identifies a confirmed hard disqualifier (on-site outside the local metro, explicit people management required, crypto/blockchain, salary below MIN_SALARY, AI product building as primary, non-US location), your tier MUST be "Skip". Never return "Worth a Look" or "Good Fit" in the same response where you have confirmed a hard disqualifier. The reason and tier must agree.
 
 JSON only. No other text."""
 
@@ -3732,7 +3729,7 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
             body = (
                 f"☀️ YOUR DAILY JOB SEARCH SUMMARY - {label}\n\n"
                 f"─" * 50 + "\n"
-                f"Good morning, Casey! ☀️  Nothing new worth your time today - "
+                f"Good morning! ☀️  Nothing new worth your time today - "
                 f"{len(all_jobs)} posting{'s' if len(all_jobs) != 1 else ''} came through but none made it past the filters.\n\n"
                 f'"{quote}"\n\n'
                 f"─" * 50 + "\n"
