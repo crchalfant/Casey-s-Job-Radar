@@ -76,32 +76,42 @@ Gmail requires an [App Password](https://myaccount.google.com/apppasswords) — 
 
 ## Making it yours — use AI to customise everything
 
-This tool is built to be customised. The filters, search queries, company list, and rating logic are all plain text or Python lists — easy to read and easy to change even if you are not a developer.
+This tool is built to be customised. The filters, search queries, company list, and rating logic are all plain text or Python lists — readable and easy to change even if you are not a developer.
 
-The fastest way to personalise it is to **upload the files directly into Claude or ChatGPT** and describe what you want. You don't need to understand every line of code. Just tell the AI what to change and it will handle the syntax. This approach — using plain English to drive code changes — is sometimes called "vibe coding" and it works really well for a project like this.
+The fastest way to personalise it is to **upload the files directly into Claude or ChatGPT** and describe what you want. You don't need to understand every line of code — just tell the AI what to change and it handles the syntax. This is sometimes called "vibe coding."
 
 **How to do it:**
 
 1. Go to [claude.ai](https://claude.ai) or [chatgpt.com](https://chatgpt.com)
 2. Upload `job_radar.py` and `config.example.py` as attachments
-3. Describe what you want changed
-4. Copy the updated code back into your files
+3. Describe what you want changed — use the prompts below as a starting point
+4. Copy the updated code back into your files and run it
+
+**Things you will need AI to help you update:**
+
+- **`PROFILE`** in `config.py` — rewrite this to describe your background, target roles, strengths, and hard constraints. This is the most important thing to get right.
+- **`LOCAL_METRO_TERMS`** in `config.py` — replace the placeholder values with your actual city and surrounding suburbs
+- **`MIN_SALARY`** in `config.py` — set to your salary floor as a plain number (e.g. `120000`)
+- **All search query lists** in `config.py` — `ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES` — replace the `[Your Role]` and `[Your Industry]` placeholders with your actual target titles and industry
+- **`TARGET_TITLES`** in `job_radar.py` — the keyword list that controls which job titles are even considered. If this doesn't match your role type, almost everything will be filtered before Claude sees it
+- **`HARD_DISQUALIFIERS`** in `job_radar.py` — add phrases for industries, domains, or contract types you never want to see
+- **`SALARY_FLOOR_EXEMPT`** in `job_radar.py` — add well-known employers in your field that reliably pay above your floor, to prevent false salary-filter dropouts
+- **`_URL_CITY_RE` and `_LOC_CITY_RE`** in `job_radar.py` — remove any cities within your commutable area from the block lists so local roles aren't accidentally filtered
+- **Claude rating prompt** in `job_radar.py` — rewrite the tier definitions so Perfect Fit, Good Fit, Worth a Look, and Skip reflect your actual situation and domain
 
 **Example prompts to get you started:**
 
-> *"I've attached job_radar.py and config.example.py. I'm a software engineer looking for senior engineering and tech lead roles in the Seattle area. Can you update TARGET_TITLES, set RALEIGH_TERMS to match the Seattle metro, and rewrite the PROFILE block for my background?"*
+> *"I've attached job_radar.py and config.example.py. I'm a software engineer looking for senior engineering roles in the Seattle area. Can you update TARGET_TITLES for engineering roles, set LOCAL_METRO_TERMS to the Seattle metro, update all the search query lists for software engineering, and rewrite the PROFILE block for my background?"*
 
-> *"I want to filter out all jobs that mention Salesforce as a hard requirement, all healthcare roles, and anything that's a contract position. Can you add these to HARD_DISQUALIFIERS in job_radar.py?"*
+> *"I want to block all jobs mentioning Salesforce as a hard requirement, healthcare domain, and contract-only positions. Can you add these to HARD_DISQUALIFIERS in job_radar.py?"*
 
-> *"I work in data science. Can you update TARGET_TITLES for data science roles, rewrite the Claude rating prompt so it scores data engineering and ML roles as Perfect Fit, and suggest 20 data-focused companies for the COMPANIES list?"*
+> *"I work in data science. Can you update TARGET_TITLES for data roles, rewrite the Claude rating prompt so ML and data engineering score as Perfect Fit, fill in all the search queries for data science, and suggest companies for the COMPANIES list?"*
 
-> *"Can you help me find the Greenhouse/Lever/Ashby slugs for these companies and add them to the COMPANIES list: [your list]?"*
+> *"Can you help me find the Greenhouse/Lever/Ashby ATS slugs for these companies and add them to the COMPANIES list: [your list]?"*
 
-> *"The rating prompt currently describes a product manager. Can you rewrite it for a UX designer targeting senior design roles?"*
+> *"The rating prompt is generic. I'm a UX designer targeting senior design roles. Can you rewrite the tier definitions for my situation?"*
 
-The `SETUP.txt` file has more detailed prompts for each specific part of the tool — start there if you want step-by-step guidance.
-
----
+The `SETUP.txt` file has more detailed prompts for each specific part — start there if you want step-by-step guidance.
 
 ## What you can customise
 
@@ -111,13 +121,13 @@ The `SETUP.txt` file has more detailed prompts for each specific part of the too
 
 **`MIN_SALARY`** — your salary floor as a plain number (e.g. `100000` for $100K). Jobs with a confirmed range entirely below this are filtered before Claude sees them. Jobs with no salary listed always pass through.
 
-**`RALEIGH_TERMS`** — replace this with your own city and surrounding suburb names. The radar uses this list to identify local hybrid and onsite roles and show them in a separate section of your email digest. Leave it empty if you only want remote roles.
+**`LOCAL_METRO_TERMS`** — replace this with your own city and surrounding suburb names. The radar uses this list to identify local hybrid and onsite roles and show them in a separate section of your email digest. Leave it empty if you only want remote roles.
 
 **`COMPANIES`** — the direct ATS company watchlist. The radar checks Greenhouse, Lever, and Ashby job boards for every company in this list on every run. See the section below for how to find slugs.
 
 **`VACATION_START` / `VACATION_END`** — set both to past dates if you are not on vacation. During vacation the radar buffers results and sends one digest when you return.
 
-**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_RALEIGH_QUERIES`) — tailor these to your exact job titles and industry keywords. Better queries mean more relevant results from each source.
+**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES`) — tailor these to your exact job titles and industry keywords. All query lists ship with `[Your Role]` and `[Your Industry]` placeholders — replace them with your actual targets.
 
 ### In `job_radar.py`
 
