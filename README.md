@@ -2,6 +2,19 @@
 
 A personal job search automation tool that aggregates listings from 11 sources daily, filters them against your criteria, rates them with Claude AI, and emails you a ranked digest each morning.
 
+## Dashboard 
+<img width="1238" height="1275" alt="Screenshot 2026-04-11 182821" src="https://github.com/user-attachments/assets/45106969-1a57-4fb5-bf35-b648cad882c4" />
+
+## Health Screen
+<img width="1255" height="1183" alt="Screenshot 2026-04-11 182846" src="https://github.com/user-attachments/assets/23172dfc-7c95-4946-96d5-7a0097759b96" />
+
+## Example Email
+<img width="2017" height="1199" alt="Example Email" src="https://github.com/user-attachments/assets/9432d4f5-86ae-4c44-8317-69df992a1a17" />
+
+## Console Output
+<img width="2550" height="1392" alt="Console Output" src="https://github.com/user-attachments/assets/f126e80a-4b7a-4d2b-adfa-76faf148a652" />
+
+
 ## What it does
 
 - Searches 11 sources: ATS direct (Greenhouse/Lever/Ashby), Adzuna, LinkedIn, Brave, Tavily, WeWorkRemotely, Jobicy, Himalayas, Remotive, USAJobs, UltiPro/UKG
