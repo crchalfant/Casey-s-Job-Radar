@@ -3,10 +3,14 @@
 A personal job search automation tool that aggregates listings from 11 sources daily, filters them against your criteria, rates them with Claude AI, and emails you a ranked digest each morning.
 
 ## Dashboard 
-<img width="1238" height="1275" alt="Screenshot 2026-04-11 182821" src="https://github.com/user-attachments/assets/45106969-1a57-4fb5-bf35-b648cad882c4" />
+<img width="1260" height="1265" alt="Screenshot 2026-04-13 080907" src="https://github.com/user-attachments/assets/9c8fb520-2f11-40e9-a718-ae59daeab776" />
 
 ## Health Screen
-<img width="1255" height="1183" alt="Screenshot 2026-04-11 182846" src="https://github.com/user-attachments/assets/23172dfc-7c95-4946-96d5-7a0097759b96" />
+<img width="1268" height="1230" alt="Screenshot 2026-04-13 080927" src="https://github.com/user-attachments/assets/55dcd4e5-2989-49d3-808f-cee621c99720" />
+
+## Skipped Jobs
+<img width="1244" height="1262" alt="Screenshot 2026-04-13 081033" src="https://github.com/user-attachments/assets/5501d01e-d704-4d52-9410-c87641cb9d55" />
+ Screen
 
 ## Example Email
 <img width="2017" height="1199" alt="Example Email" src="https://github.com/user-attachments/assets/9432d4f5-86ae-4c44-8317-69df992a1a17" />
