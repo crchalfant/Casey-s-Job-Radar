@@ -5,11 +5,17 @@ JOB SEARCH AUTOPILOT - SETUP GUIDE
 A personal job search automation tool that searches 11 sources daily, rates
 every listing with Claude AI, and emails you a ranked digest each morning.
 
+This file is the deep-dive companion to README.md. It covers step-by-step
+setup, every customizable filter, and a full set of AI prompts you can paste
+directly into Claude or ChatGPT to configure the tool for your situation.
+
+
 --------------------------------------------------------------------------------
 BEFORE YOU START - WHAT YOU NEED
 --------------------------------------------------------------------------------
 
-You will need API keys for the following services. All have free tiers.
+You will need API keys for the following services. Getting all of them takes
+about 15 minutes. Detailed signup steps are in Step 2 below.
 
   Anthropic (Claude AI)     console.anthropic.com         ~$1-5/month
   Brave Search              api.search.brave.com          Free (2,000 req/mo)
@@ -17,10 +23,8 @@ You will need API keys for the following services. All have free tiers.
   Adzuna                    developer.adzuna.com          Free
   USAJobs (optional)        developer.usajobs.gov         Free
 
-  Email: You need a Gmail account with an App Password.
-  Do NOT use your regular Gmail login password.
-  Create an App Password at: myaccount.google.com/apppasswords
-  (Security > 2-Step Verification > App Passwords)
+  Email: You need a Gmail account with an App Password (not your login
+  password). Setup instructions are in Step 2 below.
 
 You also need Python 3.10 or later installed.
 Download it at: python.org/downloads
@@ -36,8 +40,7 @@ Your project folder should look like this:
   |-- scripts/
   |   |-- job_radar.py         (main radar - run this daily)
   |   |-- dashboard.py         (Kanban dashboard)
-  |   |--radar_shared.py        shared core logic (IDs, normalization, API safety, validation)
-
+  |   |-- radar_shared.py      (shared utilities - no config needed)
   |   `-- config.py            (YOUR personal config - never commit this)
   |-- config.example.py        (template to copy from)
   |-- .env.example             (API key template to copy from)
@@ -46,8 +49,7 @@ Your project folder should look like this:
   |-- README.md
   |-- SETUP.txt                (this file)
   |-- LICENSE
-  |-- .gitignore
-  `-- setup_guide.docx         (formatted version of this guide)
+  `-- .gitignore
 
 
 --------------------------------------------------------------------------------
@@ -65,7 +67,7 @@ If you get a "pip not found" error, try:
 
 
 --------------------------------------------------------------------------------
-STEP 2 - SET UP YOUR API KEYS
+STEP 2 - GET YOUR API KEYS AND SET THEM UP
 --------------------------------------------------------------------------------
 
 Copy the .env.example file to a new file called .env in the same folder:
@@ -73,18 +75,87 @@ Copy the .env.example file to a new file called .env in the same folder:
   Windows:  copy .env.example .env
   Mac/Linux: cp .env.example .env
 
-Open .env in any text editor and fill in your keys:
+Then get each key using the instructions below and fill them in.
+
+
+ANTHROPIC (CLAUDE AI) — required, ~$1-5/month
+  Used to rate every job posting. The only paid service.
+
+  1. Go to: console.anthropic.com
+  2. Create an account and add a payment method (pay per use, no subscription)
+  3. Click "API Keys" in the left sidebar → "Create Key"
+  4. Copy the key — it starts with sk-ant-
 
   ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+
+BRAVE SEARCH — required, free
+  Used to search the web for job postings.
+
+  1. Go to: api.search.brave.com
+  2. Click "Get Started" → create a free account
+  3. Go to "API Keys" → "Create API Key" → select the Free plan (2,000 req/mo)
+  4. Copy the key — it starts with BSA
+
   BRAVE_API_KEY=BSA-your-key-here
+
+
+TAVILY — required, free
+  A second search engine used as a backup to Brave.
+
+  1. Go to: app.tavily.com
+  2. Sign up for a free account
+  3. Your API key is shown on the dashboard immediately after signup
+  4. Copy the key — it starts with tvly-
+
   TAVILY_API_KEY=tvly-your-key-here
+
+
+ADZUNA — required, free
+  A job board API that returns structured listings with salary data.
+  You need both an App ID and an App Key.
+
+  1. Go to: developer.adzuna.com
+  2. Click "Register" → create a free account
+  3. Go to "Dashboard" → "API Access Details"
+  4. Copy both your App ID and App Key
+
   ADZUNA_APP_ID=your-app-id
   ADZUNA_APP_KEY=your-app-key
-  EMAIL_FROM=youraddress@gmail.com
-  EMAIL_PASSWORD=xxxx-xxxx-xxxx-xxxx   (App Password, not your login password)
-  EMAIL_TO=youraddress@gmail.com
 
-Save the file. Never commit .env to GitHub - the .gitignore already protects it.
+
+GMAIL APP PASSWORD — required, free
+  The radar sends your daily email via Gmail. You need an App Password —
+  a 16-character code that lets apps access Gmail without your main password.
+
+  Before you start: 2-Step Verification must be enabled on your Google account.
+  Enable it at: myaccount.google.com/security
+
+  1. Go to: myaccount.google.com/apppasswords
+     (or: Google Account > Security > 2-Step Verification > App passwords)
+  2. Under "App name", type something like: Job Radar
+  3. Click "Create"
+  4. Copy the 16-character password shown — it looks like: xxxx xxxx xxxx xxxx
+     (enter it without spaces)
+
+  GMAIL_ADDRESS=youraddress@gmail.com
+  GMAIL_APP_PW=xxxxxxxxxxxxxxxx
+
+
+USAJOBS — optional, free
+  Only needed if you want federal government job listings. Skip if not.
+
+  1. Go to: developer.usajobs.gov
+  2. Click "Request an API Key" and fill in the form (approved instantly)
+  3. You will receive the key by email
+  4. Set both variables — the key and the email address you registered with
+
+  USAJOBS_API_KEY=your-key-here
+  USAJOBS_EMAIL=youraddress@gmail.com
+
+
+Save the .env file when done. Never commit it to GitHub — the .gitignore
+already protects it.
 
 
 --------------------------------------------------------------------------------
@@ -98,13 +169,13 @@ Copy the config.example.py file to scripts/config.py:
 
 Now open scripts/config.py in a text editor and customize it for yourself.
 See the "CUSTOMIZING YOUR CONFIG WITH AI" section below for the easiest way
-to do this.
+to do this — you can have Claude or ChatGPT fill in most of it for you.
 
 The key things to update:
 
-  PROFILE           Your name, current role, target roles, and career summary
-  MIN_SALARY        Your minimum acceptable salary (number, e.g. 100000 for $100K)
-  LOCAL_METRO_TERMS     Your city and surrounding metro area names
+  PROFILE           Your current role, target roles, and career summary
+  MIN_SALARY        Your minimum acceptable salary (number, e.g. 120000 for $120K)
+  LOCAL_METRO_TERMS Your city and surrounding metro area names
   COMPANIES         ATS company slugs for employers you want to track directly
   VACATION_START    Set to a past date if you are not on vacation
   VACATION_END      Set to a past date if you are not on vacation
@@ -166,9 +237,8 @@ MAC/LINUX - Cron job:
   Save and exit.
 
 
-
 ================================================================================
-WHAT FILTERS CAN YOU CUSTOMISE?
+WHAT FILTERS CAN YOU CUSTOMIZE?
 ================================================================================
 
 The radar has several filtering layers you can tune. Here is what each one
@@ -177,7 +247,7 @@ does and where to find it:
 SALARY FLOOR
   File: scripts/config.py — variable: MIN_SALARY
   Set this to your minimum acceptable annual salary as a plain number with no
-  commas or dollar sign (e.g. 100000 for $100K). Jobs with a confirmed salary
+  commas or dollar sign (e.g. 120000 for $120K). Jobs with a confirmed salary
   range entirely below this are filtered out. Jobs with no salary listed always
   pass through — the radar never drops a job just because salary is unlisted.
 
@@ -185,9 +255,9 @@ LOCATION FILTER — CITIES TO BLOCK
   File: scripts/job_radar.py — variables: _URL_CITY_RE and _LOC_CITY_RE
   Two regex lists that detect when a job requires onsite attendance in a city
   outside your metro. They come pre-loaded with major US metros and
-  international cities. To customise:
+  international cities. To customize:
     - Remove any cities that are within your commutable area
-    - Add any cities you want to block that aren't listed
+    - Add any cities you want to block that are not listed
   Jobs with "remote" anywhere in the title or description always pass through
   regardless of what these lists contain.
 
@@ -202,40 +272,40 @@ HARD DISQUALIFIERS (auto-Skip before Claude)
   File: scripts/job_radar.py — list: HARD_DISQUALIFIERS
   Phrases that automatically Skip a job before it reaches Claude. Common
   entries include staffing agency language ("on behalf of our client"),
-  contract role signals ("C2C", "corp to corp"), and unwanted domains
-  ("crypto", "blockchain"). Add or remove entries to match what you never want
-  to see in your inbox.
+  contract role signals ("C2C", "corp to corp"), and domain-specific terms
+  you never want to see. Add or remove entries to match your situation.
 
 STAFFING AGENCY BLOCKLIST
-  File: scripts/job_radar.py — list: _COMPANY_PREFILTER
+  File: scripts/job_radar.py — dict: _COMPANY_PREFILTER
   Known staffing and recruiting firms whose listings are skipped automatically.
   Add the name of any agency you keep seeing that you want to block.
 
 JOB TITLE FILTER
-  File: scripts/job_radar.py — list: TARGET_TITLES (inside search functions)
+  File: scripts/job_radar.py — list: TARGET_TITLES (inside search_ats_companies)
   Controls which job titles are considered relevant when checking ATS boards.
   Add or remove titles to match your target roles.
 
 CLAUDE RATING PROMPT
   File: scripts/job_radar.py — search for: "Perfect Fit" = 90-100%
-  The most powerful customisation. The tier definitions and hard disqualifier
+  The most powerful customization. The tier definitions and hard disqualifier
   rules are plain English — edit them to describe your own situation. See
-  Prompt 4 in the AI CUSTOMISATION section below for a ready-made prompt to
+  Prompt 4 in the AI CUSTOMIZATION section below for a ready-made prompt to
   help you do this with Claude or ChatGPT.
 
+
 ================================================================================
-MAKING IT YOURS — VIBE CODE YOUR WAY
+CUSTOMIZING YOUR CONFIG WITH AI — VIBE CODING
 ================================================================================
 
-This tool is designed to be customised to your specific job search. The
+This tool is designed to be customized to your specific job search. The
 filters, search queries, company list, and rating logic are all plain text
 or simple Python lists — readable and editable even if you are not a developer.
 
-The easiest way to personalise it is to upload the files directly into
+The easiest way to personalize it is to upload the files directly into
 Claude (claude.ai) or ChatGPT (chatgpt.com) and describe what you want.
-You don't need to understand every line of code. Just tell the AI what to
-change and it handles the syntax. This is sometimes called "vibe coding" —
-you drive with plain English, the AI does the editing.
+You do not need to understand every line of code. Just tell the AI what to
+change and it handles the syntax. This is vibe coding — you drive with plain
+English, the AI does the editing.
 
 HOW TO DO IT
   1. Go to claude.ai or chatgpt.com
@@ -244,12 +314,13 @@ HOW TO DO IT
   4. Copy the updated code back into your files and run it
 
 You can do multiple rounds — start with the basics (profile, city, titles)
-and iterate from there. The AI can also help you debug if something goes
-wrong, add new features, or explain what any part of the code does.
+and iterate from there. The AI can also help you debug errors, add new
+features, or explain what any part of the code does.
 
 THINGS YOU WILL NEED AI TO HELP YOU UPDATE
+
   config.py:
-    PROFILE              Rewrite with your name, background, target roles,
+    PROFILE              Rewrite with your background, target roles,
                          strengths, and hard constraints
     LOCAL_METRO_TERMS    Replace placeholders with your city and suburbs
     MIN_SALARY           Your salary floor as a plain number
@@ -260,76 +331,12 @@ THINGS YOU WILL NEED AI TO HELP YOU UPDATE
 
   job_radar.py:
     TARGET_TITLES        Keywords matching your target job titles — critical,
-                         anything that doesn't match is dropped immediately
+                         anything that does not match is dropped immediately
     HARD_DISQUALIFIERS   Phrases for things you never want to see
     SALARY_FLOOR_EXEMPT  Employers you trust to pay above your floor
     _URL_CITY_RE         Remove cities near you from the block list
     _LOC_CITY_RE         Same — location field version of the city filter
     Claude rating prompt Rewrite tier definitions for your situation
-
-QUICK-START VIBE CODE PROMPTS
-
-Getting set up for a different role type:
-  "I've attached job_radar.py and config.example.py. I'm a [your role] looking
-  for [target roles] in the [your city] area. Can you:
-  - Update TARGET_TITLES for my role type
-  - Set LOCAL_METRO_TERMS to my metro (city and nearby suburbs: [list them])
-  - Fill in all the search query lists (ADZUNA_QUERIES, BRAVE_QUERIES,
-    TAVILY_QUERIES, LI_REMOTE_QUERIES, LI_LOCAL_QUERIES, HIMALAYAS_QUERIES,
-    REMOTIVE_QUERIES, JOBICY_QUERIES) with my actual target titles and industry
-  - Rewrite the PROFILE block for my background: [brief summary]
-  - Rewrite the Claude rating prompt tier definitions for my situation"
-
-Adding hard filters:
-  "I want to automatically skip jobs that mention [thing you hate], [industry
-  you don't want], and any contract positions. Can you add these to
-  HARD_DISQUALIFIERS in job_radar.py and explain what each one does?"
-
-Adding companies:
-  "Can you help me find the Greenhouse, Lever, and Ashby ATS slugs for these
-  companies and add them to the COMPANIES list in config.example.py: [list]"
-
-Rewriting the rating prompt for your field:
-  "The Claude rating prompt in job_radar.py currently describes a product
-  manager. I'm a [your role]. Can you rewrite the Perfect Fit, Good Fit,
-  Worth a Look, and Skip tier definitions for my situation? My target roles
-  are [roles]. My core strengths are [strengths]. Things I won't do: [list]."
-
-Adding new features:
-  "I'd like the email digest to also include the number of days since each
-  job was posted. Can you add that to the email formatting in job_radar.py?"
-
-Debugging a crash:
-  "I ran python scripts/job_radar.py --run and got this error:
-
-  [paste the full error message here]
-
-  Here is the last 20 lines of console output before the crash:
-
-  [paste the console output here]
-
-  What is wrong and how do I fix it? Here is the relevant section of
-  job_radar.py if it helps: [paste the section around the line number
-  mentioned in the error]"
-
-Debugging quiet days (no jobs in the email):
-  "The radar ran and sent a quiet day email — 0 jobs made it through. Here
-  is the filter breakdown from the console output:
-
-  [paste the filter breakdown lines]
-
-  My target roles are [your roles]. My location setup is remote nationwide
-  OR on-site in [your city]. What is likely causing everything to be filtered
-  and what should I adjust?"
-
---------------------------------------------------------------------------------
-
-================================================================================
-CUSTOMIZING YOUR CONFIG WITH AI
-================================================================================
-
-Below are more detailed prompts for each specific part of the tool.
-Fill in the parts in [brackets] and paste directly into Claude or ChatGPT.
 
 
 --------------------------------------------------------------------------------
@@ -337,7 +344,7 @@ PROMPT 1 - SET UP YOUR CANDIDATE PROFILE
 --------------------------------------------------------------------------------
 
 Use this to generate your PROFILE block. This is what Claude reads when rating
-each job - the better your profile, the better the ratings.
+each job — the better your profile, the better the ratings.
 
 Paste this into Claude or ChatGPT:
 
@@ -345,19 +352,18 @@ Paste this into Claude or ChatGPT:
 I am setting up a job search automation tool and need help writing my candidate
 profile block. Here is my background:
 
-Name: [Your full name]
 Current role: [Your current title] at [Your current company], [start date] - present
 Previous roles: [List your 2-3 most recent roles with titles and companies]
-Key achievements: [2-3 specific metrics or accomplishments, e.g. "grew user base from X to Y"]
+Key achievements: [2-3 specific metrics or accomplishments, e.g. "grew X from Y to Z"]
 Target roles: [List the job titles you are looking for]
-Target industries: [e.g. fintech, digital banking, healthcare tech, SaaS]
+Target industries: [e.g. healthcare tech, SaaS, e-commerce]
 Target salary: $[amount]+
 Location: Remote (nationwide) OR on-site/hybrid in [Your city] area only
-Hard no's: [Things you definitely don't want, e.g. people management, crypto, below-market pay]
+Hard no's: [Things you definitely do not want, e.g. people management, crypto]
 Core strengths: [3-5 things you are genuinely great at]
 
 Please write a PROFILE string for my config.py file. Keep it factual and
-concise - 8 to 12 lines. Format it exactly like this:
+concise — 8 to 12 lines. Format it exactly like this:
 
 PROFILE = """
 [profile content here]
@@ -381,7 +387,7 @@ my config.py file.
 My target roles are: [e.g. Senior Product Manager, Senior Product Owner,
 Principal PM, Director of Product, Senior Business Analyst]
 
-My target industries are: [e.g. fintech, digital banking, payments, insurance tech]
+My target industries are: [e.g. healthcare tech, SaaS, e-commerce]
 
 My local city is: [Your city] - I want some queries that include my city name
 for finding hybrid and on-site roles nearby.
@@ -391,7 +397,7 @@ I need query lists for these variables:
   BRAVE_QUERIES      (8-12 queries, written like natural search phrases)
   TAVILY_QUERIES     (8-12 queries, written like natural search phrases)
   LI_REMOTE_QUERIES  (8-12 short keyword queries for LinkedIn remote searches)
-  LI_LOCAL_QUERIES (5-8 queries that include your city name for local searches)
+  LI_LOCAL_QUERIES   (5-8 queries that include your city name for local searches)
 
 Please write these as Python lists I can paste directly into my config.py.
 ---
@@ -402,7 +408,7 @@ PROMPT 3 - BUILD YOUR ATS COMPANY LIST
 --------------------------------------------------------------------------------
 
 Use this to get help building the COMPANIES list. This is the most powerful
-feature - the radar checks job boards directly at companies you care about,
+feature — the radar checks job boards directly at companies you care about,
 so you see roles before they show up on aggregator sites.
 
 Paste this into Claude or ChatGPT:
@@ -412,8 +418,7 @@ I am building a list of companies to monitor directly via their ATS job boards
 (Greenhouse, Lever, and Ashby). The tool tries all three APIs automatically
 for each slug.
 
-My target industries are: [e.g. fintech, digital banking, payments, insurtech,
-consumer tech]
+My target industries are: [e.g. healthcare tech, SaaS, e-commerce]
 
 My target roles are: [e.g. Senior Product Manager, Product Owner, Business Analyst]
 
@@ -430,12 +435,9 @@ Format your answer as a Python list I can paste into my config.py, with
 comments grouping companies by category. Like this:
 
 COMPANIES = [
-    # Digital Banking
-    "chime",
-    "mercury",
-    # Payments
-    "stripe",
-    "marqeta",
+    # Category name
+    "company-one",
+    "company-two",
 ]
 ---
 
@@ -446,7 +448,7 @@ PROMPT 4 - TUNE THE CLAUDE RATING PROMPT
 
 The rating prompt is what Claude uses to decide if a job is Perfect Fit,
 Good Fit, Worth a Look, or Skip. You can tune it to match your specific
-situation. Find it in job_radar.py by searching for "Perfect Fit  = 90-100%".
+situation. Find it in job_radar.py by searching for the text: 90-100%
 
 Paste this into Claude or ChatGPT:
 
@@ -458,8 +460,8 @@ Worth a Look, and Skip.
 Here is my background: [paste your PROFILE here]
 
 Here is my situation: [describe anything specific, e.g. "I keep getting rated
-Skip for roles at insurance companies even though I have relevant experience",
-or "I want to make sure fintech roles are weighted higher than other industries"]
+Skip for roles at healthcare companies even though I have relevant experience",
+or "I want to make sure SaaS roles are weighted higher than other industries"]
 
 Here is the current relevant section of my rating prompt:
 [paste the lines from job_radar.py starting with "Perfect Fit  = 90-100%"
@@ -479,9 +481,9 @@ If you find a company you want to track but are not sure of their ATS slug:
 Paste this into Claude or ChatGPT:
 
 ---
-I want to add [Company Name] to my job search autopilot's ATS company list. The tool
-checks Greenhouse (boards.greenhouse.io/SLUG), Lever (jobs.lever.co/SLUG),
-and Ashby (jobs.ashbyhq.com/SLUG) automatically.
+I want to add [Company Name] to my job search autopilot's ATS company list.
+The tool checks Greenhouse (boards.greenhouse.io/SLUG), Lever
+(jobs.lever.co/SLUG), and Ashby (jobs.ashbyhq.com/SLUG) automatically.
 
 Can you help me find the correct slug for this company? If you are not sure,
 suggest the most likely options I can test.
@@ -498,8 +500,9 @@ You can also find slugs yourself by:
 PROMPT 6 - TROUBLESHOOT QUIET DAYS
 --------------------------------------------------------------------------------
 
-If the radar runs but you keep getting "quiet day" emails with no results,
-paste this into Claude or ChatGPT:
+If the radar runs but you keep getting "quiet day" emails with no results:
+
+Paste this into Claude or ChatGPT:
 
 ---
 My job search tool ran today and found [X] raw jobs but rated them all as Skip
@@ -522,7 +525,7 @@ FREQUENTLY ASKED QUESTIONS
 ================================================================================
 
 Q: The radar ran but I got no email - what happened?
-A: Check your .env file. The most common cause is an incorrect EMAIL_PASSWORD.
+A: Check your .env file. The most common cause is an incorrect GMAIL_APP_PW.
    Make sure you used a Gmail App Password (the xxxx-xxxx-xxxx-xxxx format),
    not your regular Gmail login password. Also check your spam folder.
 
@@ -548,43 +551,26 @@ A: Yes. Each run creates its own output file with a timestamp, so multiple
 
 Q: How do I change the salary floor?
 A: Change MIN_SALARY in scripts/config.py. It is a number without commas
-   or dollar signs (e.g. 100000 for $100K).
+   or dollar signs (e.g. 120000 for $120K).
 
 Q: The dashboard shows old jobs that I have already seen - is this normal?
 A: Yes, the dashboard shows the last 3 runs worth of jobs. Jobs you have
    rejected will be permanently hidden. New jobs from the latest run will
    appear at the top of the Reviewing column sorted by tier.
 
+Q: I am not a developer. Can I still use this?
+A: Yes. The setup steps above are the only technical part. Once it is running,
+   everything else — customizing filters, tuning the rating prompt, adding
+   companies, debugging problems — can be done by pasting prompts into Claude
+   or ChatGPT and copying the output back. You do not need to write any code.
+
 
 ================================================================================
 GETTING HELP
 ================================================================================
 
-If you run into issues, the best approach is to paste your error message or
-console output into Claude or ChatGPT along with a description of what you
-were trying to do. Most setup issues are config or API key related and are
-easy to diagnose with a fresh set of eyes.
+If you run into issues, paste your error message or console output into Claude
+or ChatGPT along with a description of what you were trying to do. Most setup
+issues are config or API key related and are easy to diagnose this way.
 
-For questions about the code or commercial licensing:
-
-  Email:  casey.chalfant@protonmail.com
-  GitHub: https://github.com/crchalfant
-
-
-================================================================================
-
-SHARED MODULE (NEW)
-===================
-
-This project now includes a shared module:
-  scripts/radar_shared.py
-
-You do not need to configure this file, but it is important to understand:
-
-- It handles job ID generation and normalization
-- It ensures dashboard and radar stay in sync
-- It improves API reliability and error handling
-
-DO NOT duplicate logic from this file in other parts of the codebase.
-Always import from radar_shared instead.
-
+For questions about the code or commercial licensing, open an issue on GitHub.

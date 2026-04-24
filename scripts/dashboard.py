@@ -96,20 +96,27 @@ def _invalidate_job_cache():
 def _cached_load_all_jobs():
     now = _time_module.time()
     with _cache_lock:
-        if _jobs_cache["jobs"] is None or now - _jobs_cache["at"] > _CACHE_TTL:
-            jobs, ids = load_all_jobs()
-            _jobs_cache["jobs"] = jobs
-            _jobs_cache["ids"]  = ids
-            _jobs_cache["at"]   = now
-        return _jobs_cache["jobs"], _jobs_cache["ids"]
+        if _jobs_cache["jobs"] is not None and now - _jobs_cache["at"] <= _CACHE_TTL:
+            return list(_jobs_cache["jobs"]), dict(_jobs_cache["ids"])
+    # Do disk I/O outside the lock so other threads are not blocked during file reads.
+    jobs, ids = load_all_jobs()
+    with _cache_lock:
+        _jobs_cache["jobs"] = jobs
+        _jobs_cache["ids"]  = ids
+        _jobs_cache["at"]   = now
+    return list(jobs), dict(ids)
 
 def _cached_load_all_skipped():
     now = _time_module.time()
     with _cache_lock:
-        if _skipped_cache["jobs"] is None or now - _skipped_cache["at"] > _CACHE_TTL:
-            _skipped_cache["jobs"] = load_all_skipped()
-            _skipped_cache["at"]   = now
-        return _skipped_cache["jobs"]
+        if _skipped_cache["jobs"] is not None and now - _skipped_cache["at"] <= _CACHE_TTL:
+            return list(_skipped_cache["jobs"])
+    # Do disk I/O outside the lock.
+    jobs = load_all_skipped()
+    with _cache_lock:
+        _skipped_cache["jobs"] = jobs
+        _skipped_cache["at"]   = now
+    return list(jobs)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 # FIX (code review 2026-03-18): All paths previously used relative strings like
@@ -144,7 +151,9 @@ def load_board_state():
 def save_board_state(state):
     """Atomically write board state to disk."""
     repaired = 0
-    for jid, s in state.items():
+    # Iterate over a snapshot of items() to avoid RuntimeError when repairing
+    # malformed entries (modifying a dict during iteration raises in Python 3).
+    for jid, s in list(state.items()):
         if not isinstance(s, dict):
             state[jid] = {}
             s = state[jid]
@@ -741,7 +750,7 @@ BOARD_HTML = r"""<!DOCTYPE html>
   .tab-btn.tab-skipped.active {
     background: rgba(107,114,128,.12);
     border-color: rgba(107,114,128,.35);
-    color: #9ca3af;
+    color: var(--skipped);
   }
 
   .badge {
@@ -844,7 +853,7 @@ BOARD_HTML = r"""<!DOCTYPE html>
   .hero-subtitle {
     font-size: 15px;
     line-height: 1.6;
-    color: #aaa8ba;
+    color: var(--muted);
     max-width: 720px;
   }
 
@@ -893,7 +902,7 @@ BOARD_HTML = r"""<!DOCTYPE html>
   }
 
   .kpi-label {
-    color: #a4a1b8;
+    color: var(--muted);
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: .08em;
@@ -1499,7 +1508,7 @@ BOARD_HTML = r"""<!DOCTYPE html>
     min-height: 96px;
   }
   .health-summary-label {
-    color: #a4a1b8;
+    color: var(--muted);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: .08em;

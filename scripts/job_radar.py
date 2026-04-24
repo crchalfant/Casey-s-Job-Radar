@@ -60,12 +60,14 @@ import copy
 import html
 import re
 import sys
+import glob
 import sqlite3
 import subprocess
 import json
 import time
 import random
 import smtplib
+import traceback
 import requests
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -97,7 +99,7 @@ except ModuleNotFoundError:
 # startup errors rather than cryptic failures deep in the pipeline.
 try:
     import config as _config_module
-    from radar_shared import validate_user_config
+    from radar_shared import validate_user_config, make_job_id, normalize_title as _normalize_title_shared
     validate_user_config(_config_module)
 except ValueError as _cfg_err:
     raise SystemExit(f"\nERROR: Invalid config.py value — {_cfg_err}\n")
@@ -137,6 +139,7 @@ SEEN_FILE           = os.path.join(_OUTPUT_DIR, ".seen.json")
 
 # ── TUNING CONSTANTS ──────────────────────────────────────────────────────────
 # Centralised here so they're easy to find and adjust without hunting through code.
+CLAUDE_MODEL        = "claude-haiku-4-5-20251001"  # model used for job rating
 CLAUDE_BATCH_SIZE   = 3    # parallel workers per rating batch; higher = faster but more rate-limit risk
 CLAUDE_MAX_RETRIES  = 4    # retry attempts on rate-limit/overload (waits: 15s, 30s, 60s, 120s)
 CLAUDE_TIMEOUT_SECS = 15   # per-request timeout for Claude API calls
@@ -1065,32 +1068,11 @@ def normalize_title(title):
       'Senior PM (Remote)'  and  'Senior PM - Remote, US'  -> same key
     But preserves specialization so that:
       'Senior PM - Payments'  and  'Senior PM - Lending'  -> different keys
+
+    Delegates to radar_shared.normalize_title so the radar and dashboard always
+    produce identical job IDs. Do not reimplement this logic here.
     """
-    t = title.lower().strip()
-
-    # Strip via _TITLE_CLEANUP_RE first (catches "- Remote, US", "- Hybrid", etc.)
-    t = _TITLE_CLEANUP_RE.sub("", t).strip()
-
-    # Strip parentheticals that are pure location/remote noise
-    # Only strip if the content is a known location word - not role context
-    location_words = {"remote", "us", "usa", "united states", "nationwide",
-                      "anywhere", "hybrid", "onsite", "on-site", "contract",
-                      "full-time", "full time", "part-time", "part time"}
-    t = re.sub(r"\(([^)]*)\)", lambda m: "" if m.group(1).strip().lower() in location_words else m.group(0), t).strip()
-
-    # Strip trailing location suffix only if the trailing segment is purely location words
-    # e.g. "Senior PM - Remote, US" -> "Senior PM"
-    # but "Senior PM - Payments" stays as-is
-    for sep in [" - ", " | "]:
-        if sep in t:
-            parts = t.split(sep)
-            suffix_words = set(re.split(r"[\s,]+", parts[-1]))
-            if suffix_words.issubset(location_words):
-                t = sep.join(parts[:-1]).strip()
-
-    # Collapse whitespace
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+    return _normalize_title_shared(title)
 
 def url_key(url):
     """Strips query params so the same page with different tracking params matches."""
@@ -3526,7 +3508,7 @@ JSON only. No other text."""
                     "content-type":      "application/json",
                 },
                 json={
-                    "model":      "claude-haiku-4-5-20251001",
+                    "model":      CLAUDE_MODEL,
                     "max_tokens": CLAUDE_MAX_TOKENS,  # 250 was too tight; long reason+salary can hit ~295 chars and truncate mid-JSON
                     "messages":   [{"role": "user", "content": prompt}],
                 },
@@ -4020,7 +4002,6 @@ def main(force_send=False, verbose=False):
     on_vacation  = VACATION_START <= today < VACATION_END
     return_day   = today == VACATION_END
     run_started  = datetime.now().isoformat()
-    rated: list  = []
 
     if force_send:
         on_vacation = False
@@ -4041,7 +4022,7 @@ def main(force_send=False, verbose=False):
     except Exception as e:
         # Crashed run — mark DB entry so it does not stay as a phantom open record
         print(f"\n  FATAL: radar crashed — {e}")
-        import traceback as _tb; _tb.print_exc()
+        traceback.print_exc()
         if _db_conn and _db_run_id:
             try:
                 _db_finish_run(_db_conn, _db_run_id,
@@ -4057,7 +4038,6 @@ def main(force_send=False, verbose=False):
 
 def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
                   _db_conn, _db_run_id, run_started):
-    rated: list  = []
 
     print(f"Job Search Autopilot running - {today}")
     if on_vacation:
@@ -4350,7 +4330,6 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
     COMPANY_CACHE_MAX = 2000
 
     try:
-        import glob as _glob
         pruned_files = 0
 
         # For each run-stamped file type: sort newest-first, delete beyond KEEP_RUNS
@@ -4359,7 +4338,7 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
             f"{_OUTPUT_DIR}/*-skipped.json",
             f"{_OUTPUT_DIR}/*-report.md",
         ):
-            files = sorted(_glob.glob(pattern), reverse=True)  # newest first (timestamp in name)
+            files = sorted(glob.glob(pattern), reverse=True)  # newest first (timestamp in name)
             for fpath in files[KEEP_RUNS:]:
                 try:
                     os.remove(fpath)
@@ -4368,7 +4347,7 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
                     pass
 
         # .seen.json.corrupt — keep only the single most recent crash backup
-        corrupt_files = sorted(_glob.glob(f"{_OUTPUT_DIR}/.seen.json.corrupt*"))
+        corrupt_files = sorted(glob.glob(f"{_OUTPUT_DIR}/.seen.json.corrupt*"))
         for fpath in corrupt_files[:-1]:
             try:
                 os.remove(fpath)
@@ -4451,11 +4430,11 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
     if return_day:
         # Load buffer + add today's jobs, send digest, clear buffer
         buffered = load_buffer()
-        # Dedup by URL before extending — the same job can appear on multiple
-        # vacation days if it was seen on day 3 and again on day 7 (different run,
-        # same URL). Without this the digest email shows duplicates.
-        _buf_urls = {j.get("url") for j in buffered if j.get("url")}
-        buffered.extend(j for j in all_jobs if j.get("url") not in _buf_urls)
+        # Dedup by job_id (company|title) so jobs with no URL are also caught.
+        # URL-only dedup missed no-URL jobs (WWR/Brave), causing them to appear
+        # once per vacation day in the return digest.
+        _buf_ids = {make_job_id(j) for j in buffered}
+        buffered.extend(j for j in all_jobs if make_job_id(j) not in _buf_ids)
         if buffered:
             body = build_report_body(
                 buffered,
@@ -4471,8 +4450,8 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
     elif on_vacation:
         # Save to buffer, no email — safe to persist seen immediately
         buffered = load_buffer()
-        _buf_urls = {j.get("url") for j in buffered if j.get("url")}
-        new_for_buffer = [j for j in all_jobs if j.get("url") not in _buf_urls]
+        _buf_ids = {make_job_id(j) for j in buffered}
+        new_for_buffer = [j for j in all_jobs if make_job_id(j) not in _buf_ids]
         buffered.extend(new_for_buffer)
         save_buffer(buffered)
         save_seen(seen)
@@ -4499,22 +4478,22 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
             quote = random.choice(QUOTES)
             body = (
                 f"☀️ YOUR DAILY JOB SEARCH SUMMARY - {label}\n\n"
-                f"─" * 50 + "\n"
-                f"Good morning! ☀️  Nothing new worth your time today - "
+                + "─" * 50 + "\n"
+                + f"Good morning! ☀️  Nothing new worth your time today - "
                 f"{len(all_jobs)} posting{'s' if len(all_jobs) != 1 else ''} came through but none made it past the filters.\n\n"
                 f'"{quote}"\n\n'
-                f"─" * 50 + "\n"
-                f"Check back tomorrow."
+                + "─" * 50 + "\n"
+                + "Check back tomorrow."
             )
 
         # Append zero-source warning to email if any expected sources returned nothing
         if zero_sources:
             body += (
-                f"\n\n─" * 50 + "\n"
-                f"⚠️  SOURCE WARNING\n"
-                f"The following sources returned 0 results and may be broken:\n"
+                "\n\n" + "─" * 50 + "\n"
+                "⚠️  SOURCE WARNING\n"
+                "The following sources returned 0 results and may be broken:\n"
                 f"  {', '.join(sorted(zero_sources))}\n"
-                f"Check API keys, rate limits, or source availability."
+                "Check API keys, rate limits, or source availability."
             )
             if not actionable:
                 subject = subject.replace("Quiet day", "⚠️ Quiet day")

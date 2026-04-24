@@ -1,49 +1,139 @@
 # Job Search Autopilot
 
-A personal job search automation tool that aggregates listings from 11 sources daily, filters them against your criteria, rates them with Claude AI, and emails you a ranked digest each morning.
+A personal job search automation tool — and a practical introduction to vibe coding.
 
-## Dashboard 
-<img width="1260" height="1265" alt="Screenshot 2026-04-13 080907" src="https://github.com/user-attachments/assets/9c8fb520-2f11-40e9-a718-ae59daeab776" />
+This project does two things. It runs every morning, searches 11 job sources, rates every listing with Claude AI, and emails you a ranked digest. And it's designed so that anyone — developer or not — can pick it up, describe what they want to an AI, and make it their own without writing code from scratch.
 
-## Health Screen
-<img width="1268" height="1230" alt="Screenshot 2026-04-13 080927" src="https://github.com/user-attachments/assets/55dcd4e5-2989-49d3-808f-cee621c99720" />
+If you're job hunting, it saves you hours of manual searching. If you're new to AI-assisted development, it's a real working project you can learn on.
 
-## Skipped Jobs
-<img width="1244" height="1262" alt="Screenshot 2026-04-13 081033" src="https://github.com/user-attachments/assets/5501d01e-d704-4d52-9410-c87641cb9d55" />
- Screen
+## Screenshots
 
-## Example Email
-<img width="2017" height="1199" alt="Example Email" src="https://github.com/user-attachments/assets/9432d4f5-86ae-4c44-8317-69df992a1a17" />
+**Dashboard**
+<img width="1260" height="1265" alt="Kanban board showing job pipeline" src="https://github.com/user-attachments/assets/9c8fb520-2f11-40e9-a718-ae59daeab776" />
 
-## Console Output
-<img width="2550" height="1392" alt="Console Output" src="https://github.com/user-attachments/assets/f126e80a-4b7a-4d2b-adfa-76faf148a652" />
+**Health tab**
+<img width="1268" height="1230" alt="Run history and source coverage" src="https://github.com/user-attachments/assets/55dcd4e5-2989-49d3-808f-cee621c99720" />
 
+**Skipped jobs**
+<img width="1244" height="1262" alt="Auto-filtered jobs available for audit" src="https://github.com/user-attachments/assets/5501d01e-d704-4d52-9410-c87641cb9d55" />
+
+**Example email digest**
+<img width="2017" height="1199" alt="Daily email digest sorted by tier" src="https://github.com/user-attachments/assets/9432d4f5-86ae-4c44-8317-69df992a1a17" />
+
+**Console output**
+<img width="2550" height="1392" alt="Console output during a radar run" src="https://github.com/user-attachments/assets/f126e80a-4b7a-4d2b-adfa-76faf148a652" />
 
 ## What it does
 
 - Searches 11 sources: ATS direct (Greenhouse/Lever/Ashby), Adzuna, LinkedIn, Brave, Tavily, WeWorkRemotely, Jobicy, Himalayas, Remotive, USAJobs, UltiPro/UKG
-- Filters out non-US roles, onsite-outside-your-city roles, below-salary-floor postings, staffing agencies, and noise pages
+- Filters out non-US roles, onsite roles outside your metro, below-salary-floor postings, staffing agencies, and noise pages
 - Rates each job with Claude AI (Perfect Fit / Good Fit / Worth a Look / Skip) based on your profile
-- Emails a daily digest sorted by tier with a Kanban dashboard to track your pipeline
+- Emails a daily digest sorted by tier
+- Tracks your pipeline on a Kanban dashboard (Reviewing → Applied → Interviewing)
 
-## Project structure
+## Making it yours — vibe coding with AI
 
-```text
-job-search-profile/
-├── scripts/
-│   ├── job_radar.py        ← main radar (run this daily)
-│   ├── dashboard.py        ← Flask Kanban dashboard
-│   ├── radar_shared.py     ← shared core logic (IDs, normalization, API safety, validation)
-│   └── config.py           ← your personal config (gitignored)
-├── config.example.py       ← copy to scripts/config.py and fill in
-├── .env.example            ← copy to .env and fill in API keys
-├── requirements.txt
-├── SETUP.txt               ← full setup guide with AI customization prompts
-├── README.md               ← project documentation
-├── LICENSE
-└── output/
-    └── job-radar/          ← runtime files (gitignored)
+This tool is built to be customized. The filters, search queries, company list, and rating logic are all plain text or simple Python lists — readable and editable even if you are not a developer.
+
+The fastest way to personalize it is to upload the files directly into Claude or ChatGPT and describe what you want in plain English. You do not need to understand every line of code. Just tell the AI what to change and it handles the syntax. This is vibe coding — you drive with plain English, the AI does the editing.
+
+### How to do it
+
+1. Go to [claude.ai](https://claude.ai) or [chatgpt.com](https://chatgpt.com)
+2. Upload `job_radar.py` and `config.example.py` as attachments
+3. Paste one of the prompts below with your details filled in
+4. Copy the updated code back into your files and run it
+
+You can do multiple rounds — start with the basics (profile, city, titles) and iterate from there. The AI can also help you debug errors, add new features, or explain what any part of the code does.
+
+**Debugging tip:** If something breaks, paste the full error message plus the last 20 lines of console output into Claude or ChatGPT. You do not need to understand the error yourself — just describe what you were trying to do when it happened.
+
+### Example prompts
+
+**Set up for your role and location:**
 ```
+I've attached job_radar.py and config.example.py. I'm a [your role] looking
+for [target roles] in the [your city] area. Can you:
+- Update TARGET_TITLES for my role type
+- Set LOCAL_METRO_TERMS to my metro (city and nearby suburbs: [list them])
+- Fill in all the search query lists with my actual target titles and industry
+- Rewrite the PROFILE block for my background: [brief summary]
+- Rewrite the Claude rating prompt tier definitions for my situation
+```
+
+**Add hard filters:**
+```
+I want to automatically skip jobs that mention [thing you hate], [industry
+you don't want], and any contract positions. Can you add these to
+HARD_DISQUALIFIERS in job_radar.py and explain what each one does?
+```
+
+**Build your company watchlist:**
+```
+Can you help me find the Greenhouse, Lever, and Ashby ATS slugs for these
+companies and add them to the COMPANIES list in config.example.py: [list]
+```
+
+**Tune the rating prompt:**
+```
+The Claude rating prompt in job_radar.py is generic. I'm a [your role].
+Can you rewrite the Perfect Fit, Good Fit, Worth a Look, and Skip tier
+definitions for my situation? My target roles are [roles]. My core
+strengths are [strengths]. Things I won't do: [list].
+```
+
+**Debug a crash:**
+```
+I ran python scripts/job_radar.py --run and got this error:
+[paste the full error message]
+
+Here is the last 20 lines of console output:
+[paste console output]
+
+What is wrong and how do I fix it?
+```
+
+**Debug quiet days (no jobs in the email):**
+```
+The radar ran and sent a quiet day email — 0 jobs made it through. Here
+is the filter breakdown from the console output:
+[paste the filter breakdown lines]
+
+My target roles are [your roles]. My location is remote nationwide OR
+on-site in [your city]. What is likely causing everything to be filtered?
+```
+
+The `SETUP.txt` file has more detailed prompts for each specific part.
+
+## What you can customize
+
+### In `config.py` (your personal file, never committed to GitHub)
+
+**`PROFILE`** — the most important thing to personalize. Claude reads this when rating every single job. Write it like a concise professional summary: your current role, your background, what you are targeting, your strengths, and your hard constraints (location, salary, types of work you will not do). The more specific you are, the better the ratings.
+
+**`MIN_SALARY`** — your salary floor as a plain number (e.g. `120000` for $120K). Jobs with a confirmed range entirely below this are filtered before Claude sees them. Jobs with no salary listed always pass through.
+
+**`LOCAL_METRO_TERMS`** — your city and surrounding suburb names. The radar uses this to identify local hybrid and onsite roles and show them in a separate section of your email. Leave it empty if you only want remote roles.
+
+**`COMPANIES`** — the direct ATS company watchlist. The radar checks Greenhouse, Lever, and Ashby job boards for every company in this list on every run. See [Adding companies](#adding-companies-to-the-ats-list) below.
+
+**`VACATION_START / VACATION_END`** — set both to past dates if you are not on vacation. During vacation the radar buffers results and sends one digest when you return.
+
+**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES`) — tailor these to your exact job titles and industry keywords. All query lists ship with `[Your Role]` and `[Your Industry]` placeholders.
+
+### In `job_radar.py`
+
+**`TARGET_TITLES`** — keyword list inside `search_ats_companies()` that controls which ATS job titles are considered relevant. Anything that does not match at least one keyword is dropped before any other processing. Ships with PM/PO/BA titles as examples — update this for your role type.
+
+**`HARD_DISQUALIFIERS`** — phrases that auto-skip a job before it reaches Claude. Use this for things you are 100% certain you never want: specific industries, contract-only language, unwanted tech stacks.
+
+**`_COMPANY_PREFILTER`** — staffing agencies and job aggregators to block by company name. Add any agencies you keep seeing in your results.
+
+**`SALARY_FLOOR_EXEMPT`** — companies you know pay well above your floor even when a search snippet shows a misleadingly low number. Add employers in your target industry where you trust the compensation.
+
+**`_URL_CITY_RE` and `_LOC_CITY_RE`** — two regex lists that catch onsite roles outside your area. Pre-loaded with major US metros and international cities. Remove any cities within your commutable area.
+
+**Claude rating prompt** — the tier definitions and rules Claude uses to score every job. Find the section starting with `90-100%` in `job_radar.py`. Edit this in plain English to describe your situation. Claude follows this literally, so specificity pays off here more than anywhere else.
 
 ## Quick Start
 
@@ -64,7 +154,7 @@ cp .env.example .env
 
 ```bash
 cp config.example.py scripts/config.py
-# Edit scripts/config.py with your profile, salary floor, city, and company list
+# Edit scripts/config.py — use the AI prompts above to fill it in quickly
 ```
 
 ### 4. Run it
@@ -87,120 +177,71 @@ Add `--verbose` to see source latencies and filter breakdown. Full setup instruc
 
 ## API keys needed
 
-| Service | Where to get it | Cost |
-|---|---|---|
-| Anthropic | console.anthropic.com | Pay per use (~$1-5/month) |
-| Brave Search | api.search.brave.com | Free (2,000 req/month) |
-| Tavily | app.tavily.com | Free (1,000 req/month) |
-| Adzuna | developer.adzuna.com | Free |
-| USAJobs | developer.usajobs.gov | Free (optional) |
+Getting all the keys takes about 15 minutes. Here's exactly where to go for each one.
 
-Gmail requires an App Password, not your regular login password.
+### Anthropic (Claude AI) — required
 
-## Shared core module: `scripts/radar_shared.py`
+Used to rate every job. The only paid service — costs roughly $1–5/month at normal usage.
 
-The project now includes a shared core module:
+1. Go to [console.anthropic.com](https://console.anthropic.com)
+2. Create an account and add a payment method (no subscription — pay per use)
+3. Go to **API Keys** in the left sidebar → **Create Key**
+4. Copy the key — it starts with `sk-ant-`
 
-```text
-scripts/radar_shared.py
-```
+### Brave Search — required
 
-This file centralizes logic that should not be duplicated across `job_radar.py` and `dashboard.py`.
+Used to search the web for job postings. Free tier is plenty.
 
-### What it handles
+1. Go to [api.search.brave.com](https://api.search.brave.com)
+2. Click **Get Started** → create a free account
+3. Go to **API Keys** → **Create API Key** → select the **Free** plan (2,000 req/month)
+4. Copy the key — it starts with `BSA`
 
-- Job title normalization
-- Stable job ID generation
-- Safer external API request handling
-- Profile sanitization before sending data to AI APIs
-- Shared config validation helpers
+### Tavily — required
 
-### Why it exists
+A second search engine used as a backup to Brave. Free tier is plenty.
 
-Earlier versions duplicated some of this logic in multiple places. That created avoidable risk:
+1. Go to [app.tavily.com](https://app.tavily.com)
+2. Sign up for a free account
+3. Your API key is shown on the dashboard immediately after signup
+4. Copy the key — it starts with `tvly-`
 
-- duplicate jobs could reappear
-- rejected jobs could come back
-- dashboard state could drift from radar state
-- API failures could degrade silently
+### Adzuna — required
 
-`radar_shared.py` fixes that by making shared behavior explicit and reusable.
+A job board API that returns structured listings with salary data. Completely free.
 
-### Contributor rule
+1. Go to [developer.adzuna.com](https://developer.adzuna.com)
+2. Click **Register** → create a free account
+3. Go to **Dashboard** → **API Access Details**
+4. Copy both your **App ID** and **App Key** — you need both
 
-Do not re-implement normalization, job ID generation, or shared API safety logic in other files. Import from `radar_shared.py` instead.
+### Gmail App Password — required
 
-## Making it yours — use AI to customise everything
+The radar sends your daily email via Gmail. You need an App Password, not your regular login password. App Passwords are 16-character codes that let apps access your Gmail without exposing your main password.
 
-This tool is built to be customised. The filters, search queries, company list, and rating logic are all plain text or Python lists, readable and easy to change even if you are not a developer.
+**Before you start:** your Google account must have 2-Step Verification enabled.
 
-The fastest way to personalise it is to upload the files directly into Claude or ChatGPT and describe what you want. You do not need to understand every line of code. Just tell the AI what to change and it handles the syntax. This is sometimes called "vibe coding."
+1. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+   (or: Google Account → Security → 2-Step Verification → scroll to App passwords)
+2. Under **App name**, type something like `Job Radar`
+3. Click **Create**
+4. Copy the 16-character password shown — it looks like `xxxx xxxx xxxx xxxx`
+5. Use your Gmail address as `GMAIL_ADDRESS` and this password as `GMAIL_APP_PW`
 
-### How to do it
+> If you don't see the App passwords option, make sure 2-Step Verification is turned on first at [myaccount.google.com/security](https://myaccount.google.com/security).
 
-1. Go to claude.ai or chatgpt.com
-2. Upload `job_radar.py` and `config.example.py` as attachments
-3. Describe what you want changed. Use the prompts below as a starting point
-4. Copy the updated code back into your files and run it
+### USAJobs — optional
 
-### Things you will need AI to help you update
+Only needed if you want federal government job listings. Skip this if you don't.
 
-- `PROFILE` in `config.py` — rewrite this to describe your background, target roles, strengths, and hard constraints. This is the most important thing to get right.
-- `LOCAL_METRO_TERMS` in `config.py` — replace the placeholder values with your actual city and surrounding suburbs
-- `MIN_SALARY` in `config.py` — set to your salary floor as a plain number (for example `120000`)
-- All search query lists in `config.py` — `ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES` — replace the `[Your Role]` and `[Your Industry]` placeholders with your actual target titles and industry
-- `TARGET_TITLES` in `job_radar.py` — the keyword list that controls which job titles are even considered. If this does not match your role type, almost everything will be filtered before Claude sees it
-- `HARD_DISQUALIFIERS` in `job_radar.py` — add phrases for industries, domains, or contract types you never want to see
-- `SALARY_FLOOR_EXEMPT` in `job_radar.py` — add well-known employers in your field that reliably pay above your floor, to prevent false salary-filter dropouts
-- `_URL_CITY_RE` and `_LOC_CITY_RE` in `job_radar.py` — remove any cities within your commutable area from the block lists so local roles are not accidentally filtered
-- Claude rating prompt in `job_radar.py` — rewrite the tier definitions so Perfect Fit, Good Fit, Worth a Look, and Skip reflect your actual situation and domain
-
-### Example prompts to get you started
-
-- "I've attached `job_radar.py` and `config.example.py`. I'm a software engineer looking for senior engineering roles in the Seattle area. Can you update `TARGET_TITLES` for engineering roles, set `LOCAL_METRO_TERMS` to the Seattle metro, update all the search query lists for software engineering, and rewrite the `PROFILE` block for my background?"
-- "I want to block all jobs mentioning Salesforce as a hard requirement, healthcare domain, and contract-only positions. Can you add these to `HARD_DISQUALIFIERS` in `job_radar.py`?"
-- "I work in data science. Can you update `TARGET_TITLES` for data roles, rewrite the Claude rating prompt so ML and data engineering score as Perfect Fit, fill in all the search queries for data science, and suggest companies for the `COMPANIES` list?"
-- "Can you help me find the Greenhouse/Lever/Ashby ATS slugs for these companies and add them to the `COMPANIES` list: [your list]?"
-- "The rating prompt is generic. I'm a UX designer targeting senior design roles. Can you rewrite the tier definitions for my situation?"
-- "I ran the radar and got this error: [paste the full error message and the last few lines of console output before it]. Here is the relevant section of `job_radar.py`: [paste the section]. What is wrong and how do I fix it?"
-
-The `SETUP.txt` file has more detailed prompts for each specific part. Start there if you want step-by-step guidance.
-
-**Debugging tip:** If something breaks, the full error message plus the last 20 lines of console output is almost always enough context for Claude or ChatGPT to diagnose and fix the problem. You do not need to understand the error yourself. Just paste it in and describe what you were trying to do when it happened.
-
-## What you can customise
-
-### In `config.py` (your personal file, never committed to GitHub)
-
-**`PROFILE`** — the most important thing to personalise. Claude reads this when rating every single job. Write it like a concise professional summary: your current role, your background, what you are targeting, your strengths, and your hard constraints (location, salary, types of work you will not do). The more specific you are, the better the ratings.
-
-**`MIN_SALARY`** — your salary floor as a plain number (for example `100000` for $100K). Jobs with a confirmed range entirely below this are filtered before Claude sees them. Jobs with no salary listed always pass through.
-
-**`LOCAL_METRO_TERMS`** — replace this with your own city and surrounding suburb names. The radar uses this list to identify local hybrid and onsite roles and show them in a separate section of your email digest. Leave it empty if you only want remote roles.
-
-**`COMPANIES`** — the direct ATS company watchlist. The radar checks Greenhouse, Lever, and Ashby job boards for every company in this list on every run. See the section below for how to find slugs.
-
-**`VACATION_START / VACATION_END`** — set both to past dates if you are not on vacation. During vacation the radar buffers results and sends one digest when you return.
-
-**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES`) — tailor these to your exact job titles and industry keywords. All query lists ship with `[Your Role]` and `[Your Industry]` placeholders. Replace them with your actual targets.
-
-### In `job_radar.py`
-
-**`TARGET_TITLES`** — keyword list that controls which job titles are considered relevant. Anything that does not match at least one keyword is dropped before any other processing. Ships with PM/PO/BA titles as examples. Update this for your role type.
-
-**`HARD_DISQUALIFIERS`** — phrases that auto-skip a job before it reaches Claude. Use this for things you are 100% certain you never want: specific industries, contract-only language, unwanted tech stacks. Ships empty so you can add your own without inherited assumptions.
-
-**`_COMPANY_PREFILTER`** — staffing agencies and job aggregators to block by company name. Ships with a few well-known ones. Add any agencies you keep seeing in your results.
-
-**`SALARY_FLOOR_EXEMPT`** — companies you know pay well above your floor even when a search snippet shows a misleadingly low number. Ships empty. Add employers in your target industry where you trust the compensation.
-
-**`_URL_CITY_RE` and `_LOC_CITY_RE`** — two lists that catch onsite-outside-your-area jobs. Pre-loaded with major US metros and international cities. Remove any cities within your commutable area. Add cities you want to block.
-
-**Claude rating prompt** — the tier definitions and rules Claude uses to score every job. Find the section starting with `"Perfect Fit" = 90-100%` in `job_radar.py`. Edit this in plain English to describe your situation: what makes an ideal role, what your core strengths are, what your hard nos are. Claude follows this literally, so specificity pays off here more than anywhere else.
+1. Go to [developer.usajobs.gov](https://developer.usajobs.gov)
+2. Click **Request an API Key** and fill in the form (approved instantly)
+3. You'll receive the key by email
+4. Set both `USAJOBS_API_KEY` (the key) and `USAJOBS_EMAIL` (the email you registered with)
 
 ## Adding companies to the ATS list
 
-The `COMPANIES` list in `config.py` is the most powerful part of the tool. Direct ATS access means you see new postings the moment they go live, often before they show up on any aggregator.
+The `COMPANIES` list in `config.py` is the most powerful part of the tool. Direct ATS access means you see new postings the moment they go live, often before they appear on any aggregator.
 
 ### Finding a company's slug
 
@@ -210,7 +251,7 @@ The `COMPANIES` list in `config.py` is the most powerful part of the tool. Direc
 | Lever | `jobs.lever.co/plaid` | `plaid` |
 | Ashby | `jobs.ashbyhq.com/mercury` | `mercury` |
 
-The radar tries all three APIs for each slug automatically. You do not need to know which one a company uses, just add the slug.
+The radar tries all three APIs for each slug automatically — you do not need to know which ATS a company uses.
 
 ### Tips for finding slugs
 
@@ -219,28 +260,38 @@ The radar tries all three APIs for each slug automatically. You do not need to k
 - Browse `boards.greenhouse.io` to search Greenhouse companies directly
 - Ask Claude: "What is the Greenhouse/Lever/Ashby ATS slug for [Company Name]?"
 
+## Project structure
+
+```text
+job-search-profile/
+├── scripts/
+│   ├── job_radar.py        ← main radar (run this daily)
+│   ├── dashboard.py        ← Flask Kanban dashboard
+│   ├── radar_shared.py     ← shared utilities (IDs, normalization, validation)
+│   └── config.py           ← your personal config (gitignored)
+├── config.example.py       ← copy to scripts/config.py and fill in
+├── .env.example            ← copy to .env and fill in API keys
+├── requirements.txt
+├── SETUP.txt               ← full setup guide with customization prompts
+├── README.md
+├── LICENSE
+└── output/
+    └── job-radar/          ← runtime files (gitignored)
+```
+
 ## Output files
 
-All runtime files live in `output/job-radar/` (gitignored). The radar keeps only the last 3 runs worth of data and prunes automatically.
+All runtime files live in `output/job-radar/` (gitignored). The radar keeps only the last 3 runs and prunes automatically.
 
 | File | Purpose |
 |---|---|
 | `*-jobs.json` | Rated jobs for the dashboard board tab |
 | `*-skipped.json` | Skipped jobs for the dashboard skipped tab |
 | `*-report.md` | Email report attachment |
-| `.seen.json` | Dedup history (60-day rolling window) |
+| `.seen.json` | Deduplication history (60-day rolling window) |
 | `board_state.json` | Dashboard card positions and notes |
 | `radar_runs.db` | SQLite run history for the Health tab |
 | `debug_job_log.txt` | Full job log for debugging source quality |
-
-## Acknowledgements
-
-Special thanks to [devpyle](https://github.com/devpyle) for the early help and inspiration that got this project off the ground.
-
-## Contact
-
-GitHub: https://github.com/crchalfant  
-Email: Casey.Chalfant@protonmail.com
 
 ## License
 
