@@ -2504,7 +2504,7 @@ def _prune_board_state():
         jid for jid, s in state.items()
         if s.get("skip_dismissed")          # only skipped-tab dismissals
         and not s.get("rejected")           # never touch board rejections
-        and not s.get("flagged")            # keep flagged entries
+        and not s.get("flagged")            # keep flagged entriesed entries
         and not s.get("applied_date")       # keep anything with applied date
         and not s.get("column")             # keep anything moved to a column
         and not s.get("restored")           # keep restored jobs

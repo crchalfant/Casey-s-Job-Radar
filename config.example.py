@@ -20,7 +20,7 @@ Required environment variables (set in .env or system environment):
 from datetime import date
 
 # ── SALARY FLOOR ──────────────────────────────────────────────────────────────
-MIN_SALARY = 100  # set this to your minimum acceptable annual salary
+MIN_SALARY = 150000  # set this to your minimum acceptable annual salary (e.g. 150000 for $150K)
 
 # ── VACATION MODE ─────────────────────────────────────────────────────────────
 # Jobs are buffered during [VACATION_START, VACATION_END) and a single digest
@@ -159,7 +159,7 @@ LI_REMOTE_QUERIES = [
     "director [Your Role]",
 ]
 
-LI_RALEIGH_QUERIES = [
+LI_LOCAL_QUERIES = [
     # Local/hybrid searches — replace your-city and your-state
     "[Your Role] your-city",
     "senior [Your Role] your-state",

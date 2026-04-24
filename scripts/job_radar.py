@@ -9,7 +9,7 @@ WHAT IT DOES
 
 SOURCES (ordered richest data first so best version wins dedup)
   Tier 1 - Direct structured APIs (full description + salary + company):
-    ATS direct (Greenhouse / Lever / Ashby) - 157 verified fintech/banking slugs
+    ATS direct (Greenhouse / Lever / Ashby) - your COMPANIES list from config.py
     Adzuna         - broad job board, plain-text descriptions, salary min/max
     Jobicy         - structured remote-only, salary USD, 5000-char descriptions
     Himalayas      - remote-only board, salary USD, paginated
@@ -17,7 +17,7 @@ SOURCES (ordered richest data first so best version wins dedup)
     Remotive       - remote-only board, 5000-char descriptions
 
   Tier 2 - Aggregators (good data, sourced from other boards):
-    USAJobs        - federal government roles (GS-14/15 pay bands)
+    USAJobs        - federal government roles
 
   Tier 3 - Discovery (find postings the structured boards miss):
     LinkedIn       - good for unique postings; no desc/salary/date stored
@@ -41,7 +41,7 @@ COST
   All other sources: free (no key required or free tier)
 
 VACATION MODE
-  Set VACATION_START and VACATION_END below.
+  Set VACATION_START and VACATION_END in config.py.
   Script buffers jobs daily with no email, then sends one digest on return day.
 
 USAGE
@@ -53,91 +53,6 @@ DEBUG
   After each run, output/job-radar/debug_job_log.txt contains every job with
   full description text as sent to Claude. Upload to Claude to verify data
   quality. File is overwritten on every run.
-
-CHANGELOG (reverse chronological)
-  2026-03-18 - Session 5: Bug fixes from live testing
-    - salary_ok() bug fix: was using salary_min to check against MIN_SALARY floor.
-      For a range like $140K-$180K this set sal=140K and dropped the job even though
-      $150K falls within the range. Fixed to use salary_max when both fields are set,
-      so a job only gets dropped if the ENTIRE range is confirmed below $150K.
-    - Also clarified Claude prompt rule: skip only when the TOP of the range is below
-      $150K, not when the bottom is.
-    - FutureWarning fix: [---to] in _SALARY_CONTEXT_RE (em-dash cleanup artifact)
-      turned [--to] into [---to] which Python 3.12 treats as ambiguous set difference.
-      Fixed to [-to].
-    - ATS COMPANIES list: restored 18 slugs lost during content-replacement sessions
-      (chime, sofi, ramp, brex, adyen, lemonade, robinhood, altruist, whoop, alt,
-      kikoff, checkr, lendingtree, pathward, securitize, alpaca, paxos, oneapp) plus
-      melio and deel. Removed 5 duplicate entries. Final count: 152 unique slugs.
-
-  2026-03-18 - Session 4: Post-run log analysis and pre-filter hardening
-    - Title filter: added management consultant, customer service representative,
-      business development representative - 3 types were slipping through
-    - Claude salary validation: apply _is_plausible_salary() to Claude's returned
-      salary string, not just our own regex extraction. Fixes Versapay "$257",
-      Ramp "$100", Alpaca "$320", Deel "$11.2", etc. appearing as salary in email
-    - salary_min display guard: raised from > 0 to > 30000 to block bogus ATS
-      structured salary values (e.g. salary_min=2 from "$2B market" in description)
-    - All major structural pre-filters were already in place from Session 3:
-      _COMPANY_PREFILTER covers all 22 always-Skip companies (SoFi, Robinhood,
-      Ramp, Brex, Adyen, Chime, Lemonade, Melio, Deel, Paxos, Alpaca, Securitize,
-      Alt, OnePay, Kikoff, Altruist, WHOOP, Checkr, Lendingtree, Jerry, Pathward,
-      Anchorage) - these were already blocking before Claude on the current zip
-    - Most wrong-title patterns were also already in place from Session 3
-
-  2026-03-17 - Session 3: Bug fixes and data quality improvements
-    - ATS Ashby fix: API returns "jobs" key not "jobPostings" - was silently
-      returning 0 results for ALL Ashby companies (Ramp, Sardine, Tilthq, etc.)
-    - Greenhouse HTML fix: content field uses HTML entities (&lt;h2&gt;) not
-      real tags; added html.unescape() BEFORE tag stripping so entities become
-      real tags first, then get stripped cleanly
-    - Lever description fix: was only using descriptionPlain (~1,470 chars of
-      company boilerplate); now concatenates descriptionPlain + additionalPlain
-      + lists[] bullet sections (~4,000-5,500 chars with actual requirements)
-    - All non-ATS sources (Adzuna, Himalayas, Remotive, Jobicy,
-      RemoteOK, WWR) now use consistent pipeline:
-      html.unescape(raw) -> strip <tags> -> collapse whitespace -> truncate
-    - Himalayas: was using "excerpt" field (~200 char summary); switched to
-      "description" field with excerpt as fallback
-    - Adzuna: removed full_description=1 param that caused HTTP 400 on free
-      plan; description field returns clean plain text without it
-    - Description truncation: prompt now uses 6000 chars (up from 5000) to
-      match Lever's combined field length; GH/Ashby stay at 5000 since their
-      content beyond that is benefits boilerplate
-    - Claude rate limit fix: replaced fire-and-give-up with exponential backoff
-      retry loop (4 attempts: 15s -> 30s -> 60s -> 120s wait between retries)
-    - Claude batch pacing: replaced always-on ThreadPoolExecutor with batches
-      of 3 + 5s sleep between batches; prevents token-burst rate limit spikes
-      on large backlogs while maintaining parallelism on normal runs
-    - Empty-company filter: added after bad_scrape filter to drop Brave/Tavily/
-      LinkedIn results with no company field (news articles, aggregator pages,
-      HiringCafe links, etc.)
-    - Debug log: write_debug_log() writes full per-job log to
-      output/job-radar/debug_job_log.txt after every run (overwritten each day)
-
-  2026-03-15 - Session 2: ATS expansion and slug verification
-    - Batch-tested all 412+ ATS slugs via browser; removed 298 dead slugs
-      (credit unions, legacy banks on Workday/iCIMS, companies with no public
-      ATS API); corrected 4 wrong slugs (mx->mxtechnologiesinc, bluevine->
-      bluevineus, treasury-prime->treasuryprime, modern-treasury->moderntreasury)
-    - Added 30+ new verified slugs: nubank, trustly, tilthq, adyen, truebill,
-      creditkarma, prove, alt, engine, galileofinancialtechnologies,
-      employerdirecthealthcare, anchorage, entersekt, versapay, aledade,
-      redventures, atbayjobs, federato, sureify, ethoslife, kapitus, BestEgg,
-      spreedly, truv, sparkadvisors, deepintent, modernhealth, oportun, etc.
-    - forbrightbank: confirmed correct Lever slug (forbright-bank was 404)
-    - ATS_NAME_OVERRIDES: added display name corrections for all new slugs
-    - 133-slug clean sweep: all confirmed live before each deployment
-
-  2026-03-15 - Session 1: Initial build and core bug fixes
-    - 17 founding bugs fixed (see original session transcript for full list)
-    - Key fixes: Ashby wrong key (jobPostings->jobs), Greenhouse entity order,
-      Lever multi-field concatenation, dedup edge cases, rate limit retry,
-      salary string parser false positives, WWR company extraction
-    - Added: RemoteOK as 12th source, company signal layer (Wikipedia), parallel
-      Claude rating (ThreadPoolExecutor), ATS description fetching improvements
-    - rtp removed from local metro terms (was matching "Real-Time Payments" and
-      surfacing unrelated jobs in the local section)
 """
 
 import os
@@ -177,6 +92,15 @@ except ModuleNotFoundError:
         "\nERROR: config.py not found.\n"
         "Create scripts/config.py — copy from the repo README and fill in your details.\n"
     )
+
+# Validate config values immediately after import so bad values surface as clear
+# startup errors rather than cryptic failures deep in the pipeline.
+try:
+    import config as _config_module
+    from radar_shared import validate_user_config
+    validate_user_config(_config_module)
+except ValueError as _cfg_err:
+    raise SystemExit(f"\nERROR: Invalid config.py value — {_cfg_err}\n")
 
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
@@ -231,16 +155,14 @@ TIER_SKIP    = "Skip"
 DEFAULT_TIER        = TIER_LOOK
 
 # Companies exempt from description-extracted salary filtering.
-# These are well-known fintech/tech employers whose posted PM/PO roles consistently
+# Add well-known employers in your target industry whose posted roles consistently
 # pay above MIN_SALARY. Brave/Tavily search snippets sometimes surface salary figures
 # from older Glassdoor estimates or truncated ranges that look below floor.
 # ATS jobs from these companies (salary=None) already pass through — this only affects
 # jobs where a search engine snippet incorrectly extracted a low salary number.
 SALARY_FLOOR_EXEMPT = frozenset([
-    "upstart", "stripe", "plaid", "mercury", "brex", "chime", "affirm",
-    "robinhood", "coinbase", "square", "block", "marqeta", "adyen",
-    "wells fargo", "capital one", "jpmorgan", "chase", "bank of america",
-    "citigroup", "citi", "goldman sachs", "morgan stanley",
+    # Add company names (lowercase) that reliably pay above your MIN_SALARY floor.
+    # Example: "stripe", "google", "microsoft"
 ])
 
 # ── OUTPUT FILE PATHS ──────────────────────────────────────────────────────────
@@ -350,89 +272,25 @@ def _db_insert_filter_stats(conn, run_id, filtered_jobs):
 # slug.replace("-", " ").title() gets most names right but fails for some.
 # Add entries here when a company name from the email looks wrong.
 ATS_NAME_OVERRIDES = {
-    "ncino":           "nCino",
-    "squareup":        "Square",
-    "bill":            "Bill.com",
-    "m1-finance":      "M1 Finance",
-    "public-com":      "Public.com",
-    "cross-river":     "Cross River Bank",
-    "leadbank":        "Lead Bank",
-    "q2":              "Q2",
-    "mx":              "MX Technologies",
-    "wex":             "WEX Inc.",
-    "oneapp":          "OnePay",
-    "Jerry.ai":        "Jerry",
-    "varomoney":       "Varo Bank",
-    "monzo":           "Monzo",
-    "forbrightbank":   "Forbright Bank",
-    "tilthq":          "Tilt",
-    "galileofinancialtechnologies": "Galileo Financial Technologies",
-    "employerdirecthealthcare": "Employer Direct Healthcare",
-    "creditkarma":     "Credit Karma",
-    "zipcolimited":    "Zip Co",
-    "idme":            "ID.me",
-    "incode":          "Incode",
-    "stytch":          "Stytch",
-    "orum":            "Orum",
-    "finix":           "Finix",
-    "amount":          "Amount",
-    "oportun":         "Oportun",
-    "inkind":          "inKind",
-    "laporteusa":      "LaPorte USA",
-    "boulevard":       "Boulevard",
-    "whoop":           "WHOOP",
-    "atbayjobs":       "At-Bay",
-    "federato":        "Federato",
-    "sureify":         "Sureify",
-    "ethoslife":       "Ethos Life",
-    "kapitus":         "Kapitus",
-    "BestEgg":         "Best Egg",
-    "spreedly":        "Spreedly",
-    "truv":            "Truv",
-    "anchorage":       "Anchorage Digital",
-    "entersekt":       "Entersekt",
-    "versapay":        "Versapay",
-    "aledade":         "Aledade",
-    "redventures":     "Red Ventures",
-    "sparkadvisors":   "Spark Advisors",
-    "deepintent":      "DeepIntent",
-    "modernhealth":    "Modern Health",
-    "peakcreditunion": "Peak Credit Union",
-    "myfundedfutures": "My Funded Futures",
-    "securitize":      "Securitize",
-    "truebill":        "Rocket Money (Truebill)",
-    "nubank":          "Nubank",
-    "mxtechnologiesinc": "MX Technologies",
-    "bluevineus":       "Bluevine",
-    "treasuryprime":    "Treasury Prime",
-    "moderntreasury":   "Modern Treasury",
+    # "some-slug":    "Correct Display Name",
+    # "cash-app":     "Cash App",
+    # "m1-finance":   "M1 Finance",
 }
 # MIN_SALARY imported from config.py
 
 # ── DOMAIN -> COMPANY NAME MAP ────────────────────────────────────────────────
 # Maps URL domain substrings -> company display names for Brave/Tavily results
 # where the API returns no company field. First match wins.
-# Ported from devpyle/job-search-profile (2026-03-18).
+# Add entries for companies in your target industry whose job URLs you expect
+# to see in search results. Key = substring of the domain, value = display name.
 DOMAIN_COMPANY_MAP: dict = {
-    "fisglobal": "FIS", "fisv": "Fiserv", "fiserv": "Fiserv",
-    "jpmorgan": "JPMorgan Chase", "jpmorganchase": "JPMorgan Chase",
-    "goldmansachs": "Goldman Sachs", "morganstanley": "Morgan Stanley",
-    "bankofamerica": "Bank of America", "wellsfargo": "Wells Fargo",
-    "citigroup": "Citi", "citi.com": "Citi", "usbank": "U.S. Bank",
-    "pnc.com": "PNC", "capitalone": "Capital One",
-    "americanexpress": "American Express", "discover": "Discover",
-    "synchrony": "Synchrony", "broadridge": "Broadridge",
-    "dtcc.com": "DTCC", "intercontinentalexchange": "ICE", "ice.com": "ICE",
-    "nasdaq.com": "Nasdaq", "bloomberg": "Bloomberg", "factset": "FactSet",
-    "morningstar": "Morningstar", "blackrock": "BlackRock",
-    "vanguard": "Vanguard", "fidelity": "Fidelity", "schwab": "Charles Schwab",
-    "stripe.com": "Stripe", "plaid.com": "Plaid", "brex.com": "Brex",
-    "marqeta": "Marqeta", "adyen": "Adyen", "paypal": "PayPal",
-    "square": "Block (Square)", "intuit": "Intuit",
+    # ── Major tech / enterprise software ─────────────────────────────────────
     "salesforce": "Salesforce", "servicenow": "ServiceNow",
     "workday": "Workday", "oracle": "Oracle", "sap.com": "SAP",
     "ibm.com": "IBM", "microsoft": "Microsoft", "amazon": "Amazon",
     "google": "Google",
+    # Add more domain -> company name mappings for your target industry:
+    # "yourcompany.com": "Your Company",
 }
 
 # ── CANDIDATE PROFILE (sent to Claude for rating) ───────────────────────────
@@ -447,12 +305,12 @@ DOMAIN_COMPANY_MAP: dict = {
 # Only used for `term in HARD_DISQUALIFIERS` membership tests — frozenset gives
 # O(1) lookup vs O(n) list scan, and documents intent: these are unique, unordered terms.
 HARD_DISQUALIFIERS = frozenset([
-    # Crypto/blockchain - no legitimate fintech PM role needs these
-    "blockchain", "web3", "cryptocurrency", "crypto currency",
-    "digital assets", "programmable blockchain", "nft",
-    "decentralized finance", "smart contract",
-    # FIX (see changelog): Parafin/OnePay type cash advance origination
-    "merchant cash advance",
+    # Add phrases that should ALWAYS disqualify a job regardless of context.
+    # Keep this list SHORT — only terms that are 100% unambiguous.
+    # Everything else is better handled by Claude, which can read context.
+    # Example domain-specific terms to add for your field:
+    #   "blockchain", "web3", "cryptocurrency", "nft", "smart contract"
+    #   "merchant cash advance", "loan origination"
     # Staffing agency description phrases — recruiter posting on behalf of a client
     "on behalf of our client",
     "on behalf of a client",
@@ -460,10 +318,11 @@ HARD_DISQUALIFIERS = frozenset([
     "our client is seeking",
 ])
 
-# Separate regex-based disqualifiers that need word boundary matching
-# "defi" must be whole-word only - "define", "defined", "definitely" are NOT DeFi
-# "crypto" must be whole-word only - "cryptography", "cryptographic" are NOT crypto
-_HARD_DISQ_RE = re.compile(r"\bdefi\b|\bcrypto\b", re.IGNORECASE)
+# Separate regex-based disqualifiers that need word boundary matching.
+# Add patterns here for terms where substring matching would cause false positives.
+# Example: r"\bdefi\b|\bcrypto\b" would match "defi" but not "define" or "definitely".
+# Set to a pattern that never matches if you have no regex disqualifiers.
+_HARD_DISQ_RE = re.compile(r"(?!)", re.IGNORECASE)  # no-op by default — add patterns as needed
 
 def has_disqualifier(job):
     """
@@ -510,26 +369,16 @@ def has_disqualifier(job):
 # case-insensitive. Keep substrings specific enough to avoid false positives.
 _COMPANY_PREFILTER = {
     # ── Staffing agencies — never pass to Claude ──────────────────────────────
-    "jobgether":          ("staffing", "Jobgether posts on behalf of partner companies — staffing agency hard disqualifier"),
-    "it excel":           ("staffing", "IT Excel is a staffing/recruiting firm — hard disqualifier"),
-    "synersys":           ("staffing", "Synersys Technologies is a staffing firm — hard disqualifier"),
-    "ec1 partners":       ("staffing", "EC1 Partners is a recruiting firm — hard disqualifier"),
-    "pinnacle method":    ("staffing", "Pinnacle Method Consulting is a staffing firm — hard disqualifier"),
-    "medasource":         ("staffing", "Medasource is a staffing/contract placement firm — hard disqualifier"),
-    "akkodis":            ("staffing", "Akkodis is a contract staffing firm — hard disqualifier"),
-    "ramp talent":        ("staffing", "Ramp Talent is a recruiting firm — hard disqualifier"),
-    "davis talent":       ("staffing", "Davis Talent Search is a recruiting firm — hard disqualifier"),
-    "swooped":            ("staffing", "Swooped is a job aggregator/staffing platform — hard disqualifier"),
-    "themesoft":          ("staffing", "Themesoft is a staffing/contract placement firm — hard disqualifier"),
-    "solve it strategies":("staffing", "Solve IT Strategies is a staffing agency — hard disqualifier"),
-    "piper companies":    ("staffing", "Piper Companies is a staffing firm — hard disqualifier"),
-    "seneca creek":       ("staffing", "Seneca Creek ES is a recruiting/placement firm — hard disqualifier"),
-    "inizio partners":    ("staffing", "Inizio Partners is a staffing placement firm — hard disqualifier"),
-    "crossing hurdles":   ("staffing", "Crossing Hurdles is a recruiting/placement firm — hard disqualifier"),
-    "ladders":            ("aggregator", "Ladders is a job aggregator that reposts listings — not a direct employer"),
-    # ── Added from v1.6.0 review — description-phrase based ──────────────────
-    "insight global":     ("staffing", "Insight Global is a staffing/recruiting firm — hard disqualifier"),
-    "apex systems":       ("staffing", "Apex Systems is a staffing/IT recruiting firm — hard disqualifier"),
+    # Add staffing/recruiting firms you keep seeing in your results.
+    # Format: "company name substring": ("category", "reason string")
+    # Substring match is case-insensitive. Keep substrings specific enough to
+    # avoid false positives (e.g. "ramp talent" not just "ramp").
+    "jobgether":      ("staffing", "Jobgether posts on behalf of partner companies — staffing agency hard disqualifier"),
+    "insight global": ("staffing", "Insight Global is a staffing/recruiting firm — hard disqualifier"),
+    "apex systems":   ("staffing", "Apex Systems is a staffing/IT recruiting firm — hard disqualifier"),
+    "ladders":        ("aggregator", "Ladders is a job aggregator that reposts listings — not a direct employer"),
+    # Add more as you encounter them:
+    # "agency name": ("staffing", "Reason it is always Skip"),
 }
 
 def is_company_prefilter(job):
@@ -553,108 +402,96 @@ def is_company_prefilter(job):
 # Catches clearly wrong roles and known staffing agencies before Claude sees them.
 
 _WRONG_TITLE_RE = re.compile(
+    # ── Wrong seniority / level ───────────────────────────────────────────────
     r"^associate product (manager|owner)\b"      # junior level
-    r"|^head of product\b"                       # usually people management
-    r"|\bdata analyst\b"                         # wrong function
-    r"|\b(sales|marketing) (manager|director|executive|rep|consultant|account)\b"
-    r"|\bcustomer (service|success|care) (rep|representative|specialist|associate|coordinator|manager|operations)\b"  # FIX (see changelog): added "representative" - "Customer Service Representative" was slipping through
-    r"|\bcustomer experience (associate|representative|specialist|rep|coordinator)\b"  # CX support roles
-    r"|\bclient success\b"                       # wrong function
-    r"|\b(backend|frontend|software|engineering) (manager|lead|director)\b"
-    r"|^project manager\b"                       # project manager at start (not "product")
-    r"|\belectrical products\b"                  # engineering products, not PM
-    r"|supply chain\b"
     r"|entry.?level\b"
-    r"|\bbusiness owner\b"                       # franchise/business ownership listings
-    r"|\b(coordinator|negotiator|recruiter)\b"   # wrong level/function
-    r"|\b(games?|gaming|esports) (product|title|portfolio|manager)\b"  # gaming PM
-    r"|\breal estate\b"                          # wrong domain
-    r"|\bsecurity (manager|guard|officer)\b"     # wrong function
-    r"|\btalent acquisition\b"               # HR/recruiting roles
-    r"|\bcommand center\b"                    # IT ops roles
-    r"|\bsupport engineer\b"                  # engineering support roles
-    r"|\bbilling success manager\b"           # customer success/billing ops
-    r"|\bsenior independent\b"                # A.Team freelance listings
-    r"|\baccount executive\b"                 # sales roles
-    r"|\bsales (lead|executive|manager|rep|representative|development)\b"  # sales roles
-    r"|\b(sdr|bdr|account executive|sales development)\b"  # sales roles
-    # FIX (see changelog): Additional non-PM types confirmed in log analysis
-    r"|\bproduct designer\b"                  # UX/design roles (not PM)
-    r"|\bproduct design(er)?\b"               # design track
-    r"|\bproduct marketing\b"                 # marketing, not PM
-    r"|\bproduct security engineer\b"         # security engineering
-    r"|\bcustomer success manager\b"          # CSM roles (not PM/PO/BA)
-    r"|\blife underwriter\b"                  # insurance underwriting
-    r"|\bimplementation specialist\b"         # implementation ops
-    r"|\bcontact center rep\b"                # contact center staffing
-    r"|\bvacation specialist\b"               # travel staffing
-    r"|\bai trainer\b"                        # freelance AI training
-    r"|\b(junior|associate) client partner\b" # junior sales at consulting firms
-    r"|\bqa analyst\b"                        # quality assurance
-    r"|\bindependent operator\b"              # AtWork Group franchise listings
-    r"|\bsmb owner\b"                         # SMB ownership listings
-    r"|\bregional sales lead\b"               # sales leadership
-    r"|\bkey account manager\b"               # sales
-    r"|\bpartnership sales manager\b"         # sales
-    r"|\benterprise (billing|sales) (success|executive)\b"  # billing/sales ops
-    r"|\bdirector.*talent acquisition\b"      # recruiting leadership
-    r"|\bsenior account executive\b"          # sales
-    r"|\bsenior client delivery\b"            # delivery/ops
-    r"|\bclinical product lead\b.*temp\b"     # temp clinical roles requiring clinical degree
-    r"|\bmanagement consultant\b"             # consulting placement roles (NAVIX, Deloitte, etc.)
-    r"|\bcustomer service representative\b"   # explicitly spell out - CSR slips through the shorter pattern
-    r"|\bbusiness development representative\b" # BDR/sales dev roles
-    r"|^entrepreneur\b"                       # AtWork Group bizdev listings (title-start only)
-    r"|\bengineering manager\b"               # eng people management (not PM)
-    r"|\bdigital marketing\b"                 # marketing function (not PM)
-    r"|\bfranchise\b"                         # franchise/bizdev (Empower Brands, AtWork, etc.)
-    r"|program manager,?\s+sales\b"           # sales engineering program mgr (Samsara pattern)
-    r"|\bbusiness consultant\b"               # consulting placement (broader than management consultant)
-    r"|\bteam lead.*command\b"                # IT ops
-    r"|\bpatient.specific instrument\b"       # medical device mfg
-    # ── Added 2026-04-02 from flagged job review ──────────────────────────────
-    r"|\bdata product manager\b"               # data PM (pre-filter to save Claude credits)
-    r"|\bdata product owner\b"                 # data PO
-    r"|\blead data product\b"                  # data PM variant
-    r"|\bsr\.?\s+data product\b"               # senior data product variant
-    r"|\bsenior data product\b"                # senior data product variant
-    r"|\bstaff data product\b"                 # staff data product variant
-    r"|\bquantitative analyst\b"               # quant roles — wrong function
-    r"|\bsoftware (engineer|developer)\b"      # engineering roles — not PM
-    r"|\bfrontend (engineer|developer)\b"      # frontend dev
-    r"|\bfront.end (engineer|developer)\b"     # front-end dev
-    r"|\bbackend (engineer|developer)\b"       # backend dev
-    r"|\bfull.?stack (engineer|developer)\b"   # fullstack dev
-    r"|\bdevice design engineer\b"             # hardware engineering
-    r"|\blead product engineer\b"              # engineering function
-    r"|\bproduct engineer\b"                   # engineering function (not PM)
-    r"|\bsales engineer\b"                     # sales engineering
-    r"|\bsolutions engineer\b"                 # solutions engineering
-    r"|\b(food|meat|kitchen) (manager|production|lead)\b"  # ops/retail
-    r"|\boperations director\b"                # ops leadership
-    r"|\bservice manager\b"                    # service ops
-    r"|\b(svp|senior vice president)\b"        # C-suite too senior
-    r"|\bchief (executive|financial|operating|marketing|revenue)\b"  # C-suite
-    r"|\bassociate director\b"                 # director-level people management
-    r"|\bintern(ship)?\b"                      # internship roles
-    r"|\bdesign researcher\b"                  # research function
-    r"|\bowner operator\b"                     # owner-operator listings
-    r"|\bcompliance safety\b"                  # safety/compliance operations
-    r"|\bstatewide accountant\b"               # accounting operations
-    r"|\bprior authorization\b"                # healthcare admin ops
-    r"|\bcable backplane\b"                    # hardware engineering
-    r"|\binitialization success\b"             # ops support role
-    r"|\bintelligence engine\b"               # AI engineering
-    r"|\bsecurity clearance\b"               # clearance-required roles — wrong domain
-    # ── Added 2026-04-03 from flagged job review ──────────────────────────────
-    r"|\bgraphic designer\b"                   # design function — not PM
-    r"|\bhardware r.?d\b"                        # hardware engineering function
-    r"|\bmaster data management\b"               # MDM/data governance — not PM
-    r"|\barea business manager\b"              # field sales role
-    r"|\bprofessional sales representative\b"  # pharma/field sales
-    r"|\bsenior sales representative\b"        # sales
-    r"|\bsales representative\b"               # sales (reinforced)
-    r"|\bfield sales\b",                            # field sales
+    r"|\bintern(ship)?\b"
+    r"|\b(svp|senior vice president)\b"          # C-suite too senior
+    r"|\bchief (executive|financial|operating|marketing|revenue)\b"
+    r"|\bassociate director\b"
+    # ── Wrong function — sales ────────────────────────────────────────────────
+    r"|\b(sales|marketing) (manager|director|executive|rep|consultant|account)\b"
+    r"|\baccount executive\b"
+    r"|\bsales (lead|executive|manager|rep|representative|development)\b"
+    r"|\b(sdr|bdr|account executive|sales development)\b"
+    r"|\bregional sales lead\b"
+    r"|\bkey account manager\b"
+    r"|\bpartnership sales manager\b"
+    r"|\bsenior account executive\b"
+    r"|\bprofessional sales representative\b"
+    r"|\bsenior sales representative\b"
+    r"|\bsales representative\b"
+    r"|\bfield sales\b"
+    r"|\barea business manager\b"
+    r"|\bbusiness development representative\b"
+    # ── Wrong function — customer support / success ───────────────────────────
+    r"|\bcustomer (service|success|care) (rep|representative|specialist|associate|coordinator|manager|operations)\b"
+    r"|\bcustomer experience (associate|representative|specialist|rep|coordinator)\b"
+    r"|\bclient success\b"
+    r"|\bcustomer success manager\b"
+    r"|\bcustomer service representative\b"
+    r"|\bcontact center rep\b"
+    r"|\bbilling success manager\b"
+    # ── Wrong function — engineering ──────────────────────────────────────────
+    r"|\b(backend|frontend|software|engineering) (manager|lead|director)\b"
+    r"|\bsoftware (engineer|developer)\b"
+    r"|\bfrontend (engineer|developer)\b"
+    r"|\bfront.end (engineer|developer)\b"
+    r"|\bbackend (engineer|developer)\b"
+    r"|\bfull.?stack (engineer|developer)\b"
+    r"|\bproduct engineer\b"
+    r"|\blead product engineer\b"
+    r"|\bdevice design engineer\b"
+    r"|\bsales engineer\b"
+    r"|\bsolutions engineer\b"
+    r"|\bsupport engineer\b"
+    r"|\bengineering manager\b"
+    r"|\bhardware r.?d\b"
+    # ── Wrong function — design / research ───────────────────────────────────
+    r"|\bproduct designer\b"
+    r"|\bproduct design(er)?\b"
+    r"|\bdesign researcher\b"
+    r"|\bgraphic designer\b"
+    # ── Wrong function — marketing ────────────────────────────────────────────
+    r"|\bproduct marketing\b"
+    r"|\bdigital marketing\b"
+    # ── Wrong function — recruiting / HR ─────────────────────────────────────
+    r"|\btalent acquisition\b"
+    r"|\bdirector.*talent acquisition\b"
+    r"|\b(coordinator|negotiator|recruiter)\b"
+    # ── Wrong function — data / analytics ────────────────────────────────────
+    r"|\bdata analyst\b"
+    r"|\bquantitative analyst\b"
+    r"|\bqa analyst\b"
+    r"|\bmaster data management\b"
+    # ── Wrong function — operations / misc ───────────────────────────────────
+    r"|^project manager\b"
+    r"|\belectrical products\b"
+    r"|supply chain\b"
+    r"|\bbusiness owner\b"
+    r"|\b(games?|gaming|esports) (product|title|portfolio|manager)\b"
+    r"|\breal estate\b"
+    r"|\bsecurity (manager|guard|officer)\b"
+    r"|\bcommand center\b"
+    r"|\bai trainer\b"
+    r"|\b(junior|associate) client partner\b"
+    r"|\bindependent operator\b"
+    r"|\bsmb owner\b"
+    r"|\benterprise (billing|sales) (success|executive)\b"
+    r"|\bsenior client delivery\b"
+    r"|\bmanagement consultant\b"
+    r"|^entrepreneur\b"
+    r"|\bfranchise\b"
+    r"|program manager,?\s+sales\b"
+    r"|\bbusiness consultant\b"
+    r"|\bteam lead.*command\b"
+    r"|\bowner operator\b"
+    r"|\boperations director\b"
+    r"|\bservice manager\b"
+    r"|\bimplementation specialist\b"
+    r"|\bvacation specialist\b"
+    r"|\bsenior independent\b"
+    r"|\bproduct security engineer\b",
     re.IGNORECASE,
 )
 
@@ -812,7 +649,7 @@ _NON_US_RE = re.compile(
     # Added 2026-04-02: WeWorkRemotely international companies slipping through
     r"|\bphilippines\b|\bmanila\b|\bmetro manila\b"
     r"|\bukraine\b|\bkyiv\b|\bkharkiv\b"
-    r"|\bswitzerland\b|\bzurich\b|\bgeneva\b|\bbern\b"
+    r"|\bswitzerland\b|\bgeneva\b|\bbern\b"
     r"|\bbelgium\b|\bbrussels\b|\bantwerp\b"
     r"|\bcagayan de oro\b",
     re.IGNORECASE,
@@ -1091,16 +928,16 @@ def salary_ok(job):
     $150K (MIN_SALARY) falls within the range. Correct logic:
       - If salary_max is set: check salary_max >= MIN_SALARY (range reaches the floor)
       - If only salary_min (no max): pass through - we cannot confirm the ceiling
-        is below $150K, and a single low min may just be the base of an unlisted range
+        is below MIN_SALARY, and a single low min may just be the base of an unlisted range
       - String salary (e.g. "$140K" with no range): this is likely a specific figure,
         so check it directly against MIN_SALARY
       - No salary data: always pass
 
     SALARY_FLOOR_EXEMPT: companies where salary data from Brave/Tavily search snippets
     is unreliable (truncated ranges, equity-only mentions, Glassdoor estimates surfaced
-    by the search engine). These companies are well-known fintech employers whose posted
-    roles consistently pay above MIN_SALARY — description-extracted salary should not
-    filter them. ATS jobs from these companies have salary=None and already pass through;
+    by the search engine). Add well-known employers in your target industry to
+    SALARY_FLOOR_EXEMPT so they are not incorrectly filtered by a bad snippet.
+    ATS jobs from these companies have salary=None and already pass through;
     this exemption only matters when a search-engine snippet incorrectly lowers the number.
     """
     # Exempt known high-paying companies from description-extracted salary filtering.
@@ -1486,7 +1323,6 @@ def search_tavily():
 # Large pool of real browser user agent strings used to rotate on HTTP requests.
 # Rotating user agents makes automated requests harder to fingerprint and reduces
 # the chance of being rate-limited or blocked by job boards like LinkedIn.
-# Source: expanded from devpyle/job-scraper (MIT licensed)
 # Usage: call _random_ua() anywhere you need a User-Agent header value.
 USER_AGENTS = [
 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/37.0.2062.94 Chrome/37.0.2062.94 Safari/537.36",
@@ -2898,131 +2734,37 @@ def search_usajobs():
 
 def search_ats_companies():
     """
-    Queries Greenhouse, Lever, and Ashby career APIs directly for ~250 US
-    fintech and banking companies. All three APIs are fully public - no key
-    needed. 404 means the company does not use that ATS; silently skip.
-    Covers: consumer banking, payments, lending, B2B banking, embedded
-    finance, infrastructure/API, insurance, wealth, regtech, banking tech.
+    Queries Greenhouse, Lever, and Ashby career APIs directly for companies
+    in your COMPANIES list (defined in config.py). All three APIs are fully
+    public — no key needed. 404 means the company does not use that ATS;
+    silently skipped.
+
+    HOW TO FIND A SLUG:
+      boards.greenhouse.io/SLUG  →  use SLUG
+      jobs.lever.co/SLUG         →  use SLUG
+      jobs.ashbyhq.com/SLUG      →  use SLUG
+
+    The radar tries all three for each slug automatically.
     """
 
-    # ── Company slugs to try ──────────────────────────────────────────────────
-    # Slugs are the URL identifier each company uses on their ATS.
-    # Usually matches the company name; mismatches are silently skipped.
-    COMPANIES = [
-        # ── Consumer / neobanks ───────────────────────────────────────────────
-        "dave", "varomoney",
-        "nubank",  # Brazilian neobank; Greenhouse confirmed; has US remote + Miami roles
-        "cleo", "brigit",
-        "found", "relay",
-        "tilthq",  # Tilt credit-building app; Ashby confirmed
-        "greenlight", "gohenry",
-        "daylight",
-        "forbrightbank",  # Lever confirmed slug (forbright-bank and forbright both 404)
-        "chime",
-        # ── Payments ─────────────────────────────────────────────────────────
-        "stripe", "marqeta", "lithic", "highnote",
-        "dwolla",
-        "trustly", "finix", "spreedly", "truv", "versapay",  # Open Banking payments; Lever confirmed
-        "anchorage",       # Anchorage Digital - crypto custody; Lever confirmed (most roles will be Skipped)
-        "payoneer", "moderntreasury",
-         # Global payments platform; Greenhouse confirmed
-        "adyen",  # Dutch payments platform; all PM roles on-site (Chicago/SF) - location filter catches
-        # ── B2B banking / business banking ───────────────────────────────────
-        "mercury", "novo", "bluevineus",         "spendesk", "pleo",
-        "melio",   # B2B payments; Greenhouse slug; all roles Tel Aviv on-site - non-US filter catches
-        "emburse", "zipcolimited",
-        "ramp",  # corporate cards; Ashby slug; all PM roles NYC on-site - location filter catches
-        "brex",  # corporate cards; Greenhouse slug; all PM roles NYC/SF on-site
-        "sofi",  # neobank; Greenhouse slug; all PM roles SF/Seattle on-site
-        # ── Lending / BNPL ────────────────────────────────────────────────────
-        "monzo",  # UK digital bank; Greenhouse confirmed; has Remote (US) + NY roles
-        "upstart", "amount", "prosper",
-        "earnest", "upgrade",
-        "ondeck", "oportun", "kapitus", "BestEgg",
-        "sezzle", "affirm",
-        "kikoff",  # credit-builder; Greenhouse slug; SF on-site
-        "wisetack", "opploans",
-                # ── Mortgage / real estate finance ───────────────────────────────────
-        "blend", "better", "figure", "roofstock",
-        "point",
-        "ownup",
-        # ── Banking infrastructure / embedded finance ─────────────────────────
-        "plaid", "mxtechnologiesinc", "galileo", "galileofinancialtechnologies", "unit", "synctera", "treasuryprime",
-        "column", "alloy", "sardine", "orum",
-        "socure", "stytch", "persona", "jumio", "idme", "incode",         "prove", "entersekt",  # Identity/phone verification; Greenhouse confirmed
-        "middesk", "parafin",
-        "capchase", "clearco",
-        "drivewealth",         "leadbank",
-        "pathward",  # banking-as-a-service; Greenhouse slug; all posted roles below $150K
-        "checkr",  # background checks; Greenhouse slug; all PM roles Denver/SF on-site
-        "lendingtree",  # fintech marketplace; Greenhouse slug; all roles Seattle/Denver on-site
-        "whoop",  # wearables; Lever slug; all PM roles Boston on-site
-        "alt",  # collectibles fintech; Greenhouse slug; all roles crypto/digital assets
-        "oneapp",  # OnePay (Walmart); Ashby slug; all roles crypto or cash advance
-        # ── Wealth / investing ────────────────────────────────────────────────
-        "betterment", "wealthfront", "acorns",
-        "stash",         "tastytrade",
-        "robinhood",  # trading/banking; Greenhouse slug; all PM roles on-site
-        "altruist",  # RIA platform; Greenhouse slug; all PM roles LA/Dallas on-site
-        "alpaca",  # trading API; Greenhouse slug; all roles involve crypto/brokerage
-        "paxos",  # crypto infra; Ashby slug; all roles are blockchain
-        "securitize",  # blockchain securities; Greenhouse slug
-        # ── Insurance (insurtech) ─────────────────────────────────────────────
-        "root",
-        "ethos", "kin", "branch",
-        "openly", "sure",
-        "embroker", "newfront",
-        "counterpart", "atbayjobs", "federato", "sureify", "ethoslife",
-        "lemonade",  # insurtech; Ashby slug; all PM roles TLV/EU on-site
-        # ── Regtech / compliance / identity ───────────────────────────────────
-        "complyadvantage",
-        "employerdirecthealthcare",  # Healthcare benefits fintech; Greenhouse confirmed
-        "sentilink",
-        "codat",
-        # ── Credit / data / scoring ───────────────────────────────────────────
-        "array",
-        "creditkarma", "nerdwallet", "bankrate",
-                "truebill",  # Rocket Money / Truebill; Greenhouse confirmed
-        # ── Banking technology vendors ────────────────────────────────────────
-        "backbase",
-        "thought-machine",
-         # Alt investing platform; Greenhouse confirmed
-        "engine",  # Business travel/fintech; Greenhouse confirmed
-        "bankjoy",
-        # ── Digital-forward banks ─────────────────────────────────────────────
-        # ── Payroll / HR fintech ──────────────────────────────────────────────
-        "gusto", "deel",  # HR/payroll platform; Ashby slug; all roles EMEA region - non-US filter catches
-        "aledade", "redventures", "remote",
-        "justworks",
-        "trinet",
-        # ── Earned wage access / pay on demand ───────────────────────────────
-        "earnin", "dailypay", "payactiv",
-        "rain", "clair",
-        "tapcheck",
-        # ── Other fintech ─────────────────────────────────────────────────────
-        # ── Payments infrastructure (confirmed Greenhouse) ────────────────────
-        "form3", "inkind", "laporteusa", "boulevard", "sparkadvisors", "deepintent", "modernhealth", "peakcreditunion", "myfundedfutures",  # real-time payments API provider; has US roles (Zelle, RTP, FedNow)
-        "missionlane",  # consumer credit card fintech; Greenhouse confirmed; active PM roles
-        # ── Consumer fintech / insurtech (confirmed Ashby) ────────────────────
-         # OnePay (Walmart-backed consumer fintech); Ashby slug is 'oneapp'
-        "Jerry.ai",  # Jerry insurtech/auto super app; Ashby slug is 'Jerry.ai' (case-sensitive)
-        # ── Retail / consumer tech with financial products ────────────────────
-        "stitchfix",  # Greenhouse confirmed; Sr PM Financial Systems role seen
-        # ── Major US credit unions ────────────────────────────────────────────
-        # ── NC / local metro banks and institutions ──────────────────────────
-        # ── Additional confirmed slugs (added 2026-04-02) ────────────────────
-        "quinstreet",     # QuinStreet — performance marketing fintech; Greenhouse confirmed
-    ]
+    # ── Company slugs — loaded from config.py ────────────────────────────────
+    # Define your COMPANIES list in config.py. The radar tries Greenhouse,
+    # Lever, and Ashby for each slug automatically.
+    # ATS_NAME_OVERRIDES (also in config.py) corrects display names for slugs
+    # that don't convert cleanly via slug.replace("-", " ").title().
+    from config import COMPANIES  # noqa — imported here to keep config.py as single source of truth
 
     # ── Title keywords for filtering ──────────────────────────────────────────
+    # Update these to match your target role types. The radar drops any ATS
+    # posting whose title does not contain at least one of these keywords.
     TARGET_TITLES = [
+        # Replace with your target role keywords. Examples:
         "product manager", "product owner", "product lead",
         "principal product", "vp product", "head of product",
-        "business analyst", "product director", "avp product",
-        "customer experience manager", "customer experience director",
-        "digital experience", "experience owner",
-        "director of product", "group product", "staff product",
-        "technical product manager",
+        "business analyst", "product director", "staff product",
+        "director of product", "technical product manager",
+        # Add your own:
+        # "your role keyword",
     ]
 
     # Titles that contain a TARGET_TITLE keyword but are actually wrong roles
@@ -3178,8 +2920,6 @@ def search_ats_companies():
 
     total      = len(COMPANIES)
     print(f"  ATS: checking {total} companies across Greenhouse / Lever / Ashby...")
-
-    # FIX (race condition): original design passed a shared seen_urls set into all
     # three _try_* functions and mutated it from 10 concurrent threads. CPython's GIL
     # makes individual set.add() safe but the check-then-add compound op is NOT atomic,
     # allowing two threads to pass the `if url in seen_urls` check before either adds.
@@ -3227,26 +2967,16 @@ def search_ats_companies():
 
 # ── SEARCH: UKG / ULTIPRO ─────────────────────────────────────────────────────
 
-# Known UltiPro company codes for fintech/banking/insurance companies.
+# Known UltiPro/UKG company codes to monitor.
 # Format: { "CompanyCode/BoardGuid": "Display Name" }
 # URL pattern: https://recruiting.ultipro.com/{CODE}/JobBoard/{GUID}/
-# API pattern: https://recruiting.ultipro.com/{CODE}/JobBoard/{GUID}/api/rest/jobboard/v1/list
 #
 # To add a new company: find the URL of any job posting, extract the code and GUID.
 # Example: recruiting.ultipro.com/CHE1007CHEV/JobBoard/604b85b9-c229-47a8-8319-5b9130e7bd81/
 #   → code = "CHE1007CHEV", guid = "604b85b9-c229-47a8-8319-5b9130e7bd81"
 _ULTIPRO_COMPANIES = {
-    # ── Originally confirmed from user job URLs ────────────────────────────────
-    "CHE1007CHEV/604b85b9-c229-47a8-8319-5b9130e7bd81": "Chevron Federal Credit Union",
-    "FIN1006FIOA/ea26052b-b8a2-489f-b1dc-3acc6bac391d": "FIOA Financial",
-    # ── Added 2026-04-02 — confirmed active PM/PO roles and remote eligibility ─
-    "UNI1046UFMB/d8f90aad-672e-4f0a-bbc1-a17aa8cf1111": "Atlantic Union Bank",
-    # Atlantic Union Bank: $20B+ regional bank headquartered in VA; posts remote
-    # digital PM/PO roles eligible in NC, VA, MD, PA, GA. the user's local metro can be configured in config.py.
-    # Confirmed: "Digital Product Manager" and "Digital Product Owner III" remote roles.
-    "TEG1001TEGR/ad4204e8-c7f7-47f1-8177-c9f64730dccc": "InvestCloud",
-    # InvestCloud: wealth management fintech platform; confirmed active PM role on
-    # their UltiPro board as of 2026-04-02.
+    # Add companies that use UltiPro/UKG and are relevant to your search.
+    # "CODE/GUID": "Company Display Name",
 }
 
 _ULTIPRO_SEARCH_URL = (
@@ -3293,7 +3023,7 @@ def search_ultipro():
     base_payload = {
         "opportunitySearch": {
             "Top": 50,
-            TIER_SKIP: 0,
+            "Skip": 0,   # pagination offset — literal key name, NOT the TIER_SKIP constant
             "QueryString": "",
             "OrderBy": [{"Value": "postedDateDesc", "PropertyName": "PostedDate", "Ascending": False}],
             "Filters": [
@@ -3450,8 +3180,7 @@ def search_jobicy():
     """
     Free public JSON API - no key required. US-filtered remote jobs.
     6-hour publish delay (fine for daily digest).
-    Queries: management + product titles, accounting-finance, business,
-             and direct fintech/banking keyword searches.
+    Queries are defined in config.py (JOBICY_QUERIES).
     Rate limit: no more than once per hour - daily run is well within limits.
     """
     queries = JOBICY_QUERIES  # defined in config.py
@@ -3752,34 +3481,32 @@ Description: {full_desc[:6000]}{salary_hint}
 Return ONLY a JSON object with exactly these three fields:
   "tier": one of exactly these four strings: "Perfect Fit", "Good Fit", "Worth a Look", "Skip"
   "reason": one sentence explaining the rating (mention the key match or the key gap)
-  "salary": the salary range exactly as stated in the description (e.g. "$150,000-$180,000", "$160K", "up to $175K") - use null if no salary is mentioned anywhere in the description
+  "salary": the salary range exactly as stated in the description (e.g. "$120,000-$150,000", "$130K", "up to $160K") - use null if no salary is mentioned anywhere in the description
 
 Tier guide:
-"Perfect Fit"  = 90-100% match. PM, PO, or BA role that aligns with the candidate's target domain and seniority. Right level, right domain, no hard disqualifiers. This is the strongest match category.
-"Good Fit"     = 70-90% match. Same strong PM/PO/BA skills but different domain (insurance, healthcare, SaaS, retail) OR minor differences in seniority or scope. Still a strong candidate - just needs to pitch the domain transfer.
-"Worth a Look" = 60-70% match. Title fits and the candidate meets some or most of the skills, but it may be a stretch to land - different industry, slightly off seniority, or requires pitching the skillset differently. Worth applying if the role interests them.
+"Perfect Fit"  = 90-100% match. Role that aligns with the candidate's target domain, seniority, and core strengths. Right level, right domain, no hard disqualifiers.
+"Good Fit"     = 70-90% match. Strong skills match but different domain OR minor differences in seniority or scope. Still a strong candidate — just needs to pitch the domain transfer.
+"Worth a Look" = 60-70% match. Title fits and the candidate meets some or most of the skills, but it may be a stretch — different industry, slightly off seniority, or requires pitching the skillset differently.
 "Skip"         = Anything else. No realistic chance, or a hard disqualifier is present. Rate as Skip ONLY if one of these is confirmed:
-  - Managing direct reports - ONLY if the description explicitly requires prior people management experience as a must-have. Leading or coordinating a cross-functional team without direct reports is NOT a disqualifier.
-  - On-site or hybrid with required office attendance OUTSIDE the candidate's local metro area. Read carefully - if the description says "hybrid" or "in-person" or "on-site" and the location is outside the target metro, Skip it. But if the description says "remote" as the primary arrangement and mentions in-person as optional or occasional, do NOT skip it. IMPORTANT: If the word "Remote" appears in the job TITLE itself (e.g., "Senior PM (Remote)", "Remote - Senior PM"), treat the role as remote regardless of what the Location field shows. Job boards like Adzuna often populate Location with the company's registered office address even for fully remote roles.
-  - Staffing agency or contract-to-hire placement. Skip any role posted by a recruiting or staffing firm (Kforce, CyberCoders, Avenue Code, 1872 Consulting, Robert Half, Insight Global, Randstad, TEKsystems, etc.) OR any role explicitly described as contract, temp, or C2H regardless of who posts it.
-  - Credit risk, underwriting, or loan origination as the PRIMARY function. IMPORTANT: "Servicing" and "collections" after origination (account management, payment plans, customer support for existing accounts) are NOT the same as origination or underwriting. Post-origination servicing is a valid target - do NOT skip it. Only skip if the role is about evaluating creditworthiness, approving loans, or originating new credit.
-  - Compensation range is entirely below $150K (i.e. the TOP of the posted range is below $150K). A range like $140K-$180K or $120K-$155K should NOT be skipped - $150K falls within both those ranges. Only skip if the maximum listed salary is confirmed below $150K.
-  - Crypto, blockchain, or web3 as core product focus
-  - AI product building as the PRIMARY function. Skip if: the company's core product IS an AI platform/tool, or the role's primary focus is owning/building AI features, AI roadmap, or AI-powered products. Examples of Skip: "own our AI assistant roadmap", "build LLM-powered features", "lead AI product strategy for our platform", "PM for our machine learning products". Do NOT skip if: AI is mentioned only as a tool the team uses internally, or the role is a standard PM role at a company that happens to use AI.
-  - Non-US remote role - if a company is headquartered outside the US and the description does not explicitly state the role is open to US-based remote candidates, Skip it. European, Baltic, and UK banks hiring remotely are typically hiring within their own region.
+  - Managing direct reports — ONLY if the description explicitly requires prior people management experience as a must-have. Leading a cross-functional team without direct reports is NOT a disqualifier.
+  - On-site or hybrid with required office attendance OUTSIDE the candidate's local metro area. If the description says "remote" as the primary arrangement and mentions in-person as optional or occasional, do NOT skip it. IMPORTANT: If the word "Remote" appears in the job TITLE itself (e.g., "Senior PM (Remote)"), treat the role as remote regardless of what the Location field shows.
+  - Staffing agency or contract-to-hire placement. Skip any role posted by a recruiting or staffing firm OR any role explicitly described as contract, temp, or C2H regardless of who posts it.
+  - Compensation range is entirely below the candidate's stated salary floor (i.e. the TOP of the posted range is below the floor). A range that straddles the floor should NOT be skipped.
+  - Non-US remote role — if a company is headquartered outside the US and the description does not explicitly state the role is open to US-based remote candidates, Skip it.
+  - Any hard disqualifier domain or role type explicitly listed in the candidate's PROFILE above.
 
 IMPORTANT RATING NOTES:
-- Authentication, MFA, OTP, identity management, and consumer portal experience listed in the PROFILE are CORE strengths. Roles requiring IAM, authentication platform ownership, login/onboarding flows, or portal experience should be rated Perfect Fit or Good Fit, not downgraded.
-- If a JD lists a specific platform as required - not preferred - and the candidate profile does not indicate experience with it, that is a hard requirement gap. Rate it Worth a Look or Skip depending on how central the platform is, not Perfect Fit or Good Fit.
+- Core strengths and priority domains listed in the PROFILE should be weighted heavily toward Perfect Fit or Good Fit.
+- If a JD lists a specific platform as required — not preferred — and the candidate profile does not indicate experience with it, that is a hard requirement gap. Rate it Worth a Look or Skip depending on how central the platform is.
 - Any companies explicitly listed in the candidate profile as priority targets should be rated at least Good Fit unless a confirmed hard disqualifier is present.
 
-CRITICAL RATING RULES - these override everything else:
+CRITICAL RATING RULES — these override everything else:
 1. Missing salary is NEVER a reason to Skip or downgrade. Rate on title and domain fit. The candidate will look up salary themselves.
 2. Missing location or unclear remote status is NEVER a reason to Skip or downgrade. Rate on title and domain fit alone.
 3. An incomplete or short job description is NEVER a reason to Skip. If the title fits and there are no confirmed hard disqualifiers, rate it Worth a Look or higher.
 4. "Cannot assess" or "impossible to evaluate" are NOT valid reasons to Skip. When in doubt, rate Worth a Look so the candidate can decide.
-5. Only Skip when you can CONFIRM a hard disqualifier is present - not when you merely suspect one might exist.
-6. CONSISTENCY RULE: If your reason sentence identifies a confirmed hard disqualifier (on-site outside local metro, explicit people management required, crypto/blockchain, salary below $150K, AI product building as primary, non-US location), your tier MUST be "Skip". Never return "Worth a Look" or "Good Fit" in the same response where you have confirmed a hard disqualifier. The reason and tier must agree.
+5. Only Skip when you can CONFIRM a hard disqualifier is present — not when you merely suspect one might exist.
+6. CONSISTENCY RULE: If your reason sentence identifies a confirmed hard disqualifier, your tier MUST be "Skip". The reason and tier must agree.
 
 JSON only. No other text."""
 
@@ -4283,8 +4010,8 @@ def _timed_source(name: str, fn, verbose: bool = False):
         print(f"  [{name}] Source failed: {e}")
         jobs = []
     latency_ms = int((time.monotonic() - t0) * 1000)
-    suffix = f" ({latency_ms}ms)" if verbose else ""
-    print(f"  {len(jobs)} results{suffix}")
+    if verbose:
+        print(f"  [{name}] {len(jobs)} results ({latency_ms}ms)")
     return jobs, latency_ms
 
 
@@ -4672,8 +4399,6 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
     all_jobs = rated + disqualified
 
     # ── Write debug log (overwrites previous day's log) ───────────────────────
-    write_debug_log(all_jobs, raw_counts, run_time=datetime.now())
-
     # NOTE: filtered_log.json removed — SQLite radar_runs.db stores per-run
     # filter breakdowns durably in filter_stats and is queryable via the Health tab.
     if verbose and filtered_jobs:
@@ -4683,7 +4408,10 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
         print("  Filter breakdown: " + ", ".join(f"{r}: {c}" for r, c in sorted(by_r.items())))
 
     # ── Write dashboard JSON files ────────────────────────────────────────────
+    # Capture run_time once here so all output files share the same timestamp,
+    # and write_debug_log uses the same time rather than a fresh datetime.now().
     run_time = datetime.now()
+    write_debug_log(all_jobs, raw_counts, run_time=run_time)
     write_daily_jobs_json(all_jobs, today, run_time)
     write_daily_skipped_json(all_jobs, today, run_time)
 
