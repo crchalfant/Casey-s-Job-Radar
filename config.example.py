@@ -202,3 +202,65 @@ JOBICY_QUERIES = [
     # Add more queries for your industry:
     # {"geo": "usa", "industry": "your-industry", "tag": "your keyword", "count": 50},
 ]
+
+# ── HARD DISQUALIFIERS ────────────────────────────────────────────────────────
+# Phrases that auto-skip a job before Claude is called.
+# Scanned against title + description. Keep SHORT — only 100% unambiguous terms.
+# Everything context-dependent is better handled by Claude.
+HARD_DISQUALIFIERS = frozenset([
+    # Staffing agency description phrases
+    "on behalf of our client",
+    "on behalf of a client",
+    "our client is looking",
+    "our client is seeking",
+    # Add domain-specific terms you never want, e.g.:
+    # "blockchain", "web3", "cryptocurrency", "nft", "smart contract",
+    # "merchant cash advance",
+])
+
+# Regex pattern for word-boundary disqualifiers (avoids false positives).
+# Use this for terms where a plain substring match would cause false positives.
+# Example: r"\bdefi\b|\bcrypto\b" matches "defi" but not "define" or "definitely".
+# Set to r"(?!)" (matches nothing) if you have no regex disqualifiers.
+HARD_DISQ_PATTERN = r"(?!)"  # replace with e.g. r"\bdefi\b|\bcrypto\b"
+
+# ── COMPANY PRE-FILTER ────────────────────────────────────────────────────────
+# Staffing agencies and aggregators that are always-Skip regardless of title.
+# Format: "company name substring": ("category", "reason string")
+# Substring match is case-insensitive.
+COMPANY_PREFILTER = {
+    # ── Staffing agencies ─────────────────────────────────────────────────────
+    "jobgether":      ("staffing", "Jobgether posts on behalf of partner companies — staffing agency hard disqualifier"),
+    "insight global": ("staffing", "Insight Global is a staffing/recruiting firm — hard disqualifier"),
+    "apex systems":   ("staffing", "Apex Systems is a staffing/IT recruiting firm — hard disqualifier"),
+    "robert half":    ("staffing", "Robert Half is a staffing/recruiting firm — hard disqualifier"),
+    # Add more as you encounter them:
+    # "agency name": ("staffing", "Reason it is always Skip"),
+    # ── Aggregators ───────────────────────────────────────────────────────────
+    "ladders":        ("aggregator", "Ladders is a job aggregator that reposts listings — not a direct employer"),
+}
+
+# ── WRONG TITLE PATTERNS ──────────────────────────────────────────────────────
+# Regex fragments for job titles that should always be filtered out before
+# Claude sees them. Add patterns for wrong-function titles that keep appearing.
+# Each entry is a raw string regex pattern — joined with | at startup.
+WRONG_TITLE_PATTERNS = [
+    # Wrong function — engineering
+    r"\bsoftware (engineer|developer)\b",
+    r"\bengineering manager\b",
+    r"\bsales engineer\b",
+    # Wrong function — design
+    r"\bproduct designer\b",
+    r"\bgraphic designer\b",
+    # Wrong function — sales
+    r"\baccount executive\b",
+    r"\bsales (manager|director|executive|rep|representative)\b",
+    # Wrong function — data
+    r"\bdata analyst\b",
+    r"\bdata scientist\b",
+    # Wrong seniority
+    r"\bjunior\b",
+    r"\bintern(ship)?\b",
+    # Add more patterns for titles you keep seeing that are wrong for you:
+    # r"\byour pattern here\b",
+]

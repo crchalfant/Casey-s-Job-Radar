@@ -64,6 +64,20 @@ def sanitize_profile(profile: str) -> str:
 def validate_user_config(cfg: Any) -> None:
     if not isinstance(getattr(cfg, "MIN_SALARY", None), int) or cfg.MIN_SALARY <= 0:
         raise ValueError("MIN_SALARY must be a positive integer")
+    # Q4: Warn if MIN_SALARY is outside a plausible range — catches accidental extra zeros
+    if cfg.MIN_SALARY < 30_000:
+        import warnings
+        warnings.warn(
+            f"MIN_SALARY is set very low (${cfg.MIN_SALARY:,}). "
+            "If this is intentional, ignore this warning. "
+            "Otherwise check for a missing zero (e.g. 15000 instead of 150000).",
+            UserWarning, stacklevel=2,
+        )
+    if cfg.MIN_SALARY > 1_000_000:
+        raise ValueError(
+            f"MIN_SALARY is set unreasonably high (${cfg.MIN_SALARY:,}). "
+            "This would filter out all jobs. Check for an extra zero."
+        )
     for attr in ("VACATION_START", "VACATION_END"):
         if not isinstance(getattr(cfg, attr, None), date):
             raise ValueError(f"{attr} must be a datetime.date")
@@ -101,6 +115,21 @@ def validate_user_config(cfg: Any) -> None:
                         raise ValueError(f"{name} dict values must not contain empty strings")
             else:
                 raise ValueError(f"{name} contains unsupported entry type: {type(item).__name__}")
+
+    # D5: Warn if any query list still contains example placeholders from config.example.py.
+    # A user who forgot to fill in their queries gets 0 results with no explanation.
+    import warnings as _warnings
+    placeholder_markers = ("[your role]", "[your industry]", "[your city]", "[your state]")
+    for name in query_attrs:
+        for item in getattr(cfg, name):
+            text = item if isinstance(item, str) else " ".join(str(v) for v in (item.values() if isinstance(item, dict) else item))
+            if any(m in text.lower() for m in placeholder_markers):
+                _warnings.warn(
+                    f"{name} still contains example placeholders (e.g. '[Your Role]'). "
+                    "Replace them with your actual target roles and industry or you will get 0 results.",
+                    UserWarning, stacklevel=2,
+                )
+                break  # one warning per query list is enough
 
 
 def safe_json_load(path: str, *, default: Any, expected_type: type | tuple[type, ...] | None = None) -> Any:

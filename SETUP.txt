@@ -269,19 +269,32 @@ YOUR LOCAL METRO AREA
   own city and nearby suburbs.
 
 HARD DISQUALIFIERS (auto-Skip before Claude)
-  File: scripts/job_radar.py — list: HARD_DISQUALIFIERS
+  File: scripts/config.py — variable: HARD_DISQUALIFIERS
   Phrases that automatically Skip a job before it reaches Claude. Common
   entries include staffing agency language ("on behalf of our client"),
   contract role signals ("C2C", "corp to corp"), and domain-specific terms
-  you never want to see. Add or remove entries to match your situation.
+  you never want to see (e.g. "blockchain", "web3"). Add or remove entries
+  to match your situation.
+
+HARD DISQUALIFIER REGEX (word-boundary matching)
+  File: scripts/config.py — variable: HARD_DISQ_PATTERN
+  A regex string for disqualifiers where a plain substring match would cause
+  false positives. For example, r"\bdefi\b|\bcrypto\b" matches "defi" and
+  "crypto" as whole words but not "define" or "cryptography". Set to r"(?!)"
+  (matches nothing) if you have no regex disqualifiers.
 
 STAFFING AGENCY BLOCKLIST
-  File: scripts/job_radar.py — dict: _COMPANY_PREFILTER
+  File: scripts/config.py — variable: COMPANY_PREFILTER
   Known staffing and recruiting firms whose listings are skipped automatically.
+  Format: {"company name substring": ("staffing", "reason string")}
   Add the name of any agency you keep seeing that you want to block.
 
 JOB TITLE FILTER
-  File: scripts/job_radar.py — list: TARGET_TITLES (inside search_ats_companies)
+  File: scripts/config.py — variable: WRONG_TITLE_PATTERNS
+  A list of regex patterns that filter out wrong-function job titles before
+  Claude sees them (e.g. software engineer, sales manager, data analyst).
+  Add patterns for any titles that keep slipping through to Claude.
+  File: scripts/job_radar.py — variable: TARGET_TITLES (inside search_ats_companies)
   Controls which job titles are considered relevant when checking ATS boards.
   Add or remove titles to match your target roles.
 
@@ -324,6 +337,10 @@ THINGS YOU WILL NEED AI TO HELP YOU UPDATE
                          strengths, and hard constraints
     LOCAL_METRO_TERMS    Replace placeholders with your city and suburbs
     MIN_SALARY           Your salary floor as a plain number
+    HARD_DISQUALIFIERS   Phrases for things you never want to see
+    HARD_DISQ_PATTERN    Regex for word-boundary disqualifiers (e.g. crypto)
+    COMPANY_PREFILTER    Staffing agencies and aggregators to always block
+    WRONG_TITLE_PATTERNS Regex patterns for wrong-function job titles to filter
     All query lists      ADZUNA_QUERIES, BRAVE_QUERIES, TAVILY_QUERIES,
                          LI_REMOTE_QUERIES, LI_LOCAL_QUERIES,
                          HIMALAYAS_QUERIES, REMOTIVE_QUERIES, JOBICY_QUERIES
@@ -332,7 +349,6 @@ THINGS YOU WILL NEED AI TO HELP YOU UPDATE
   job_radar.py:
     TARGET_TITLES        Keywords matching your target job titles — critical,
                          anything that does not match is dropped immediately
-    HARD_DISQUALIFIERS   Phrases for things you never want to see
     SALARY_FLOOR_EXEMPT  Employers you trust to pay above your floor
     _URL_CITY_RE         Remove cities near you from the block list
     _LOC_CITY_RE         Same — location field version of the city filter
@@ -449,6 +465,10 @@ PROMPT 4 - TUNE THE CLAUDE RATING PROMPT
 The rating prompt is what Claude uses to decide if a job is Perfect Fit,
 Good Fit, Worth a Look, or Skip. You can tune it to match your specific
 situation. Find it in job_radar.py by searching for the text: 90-100%
+
+Note: HARD_DISQUALIFIERS, COMPANY_PREFILTER, and WRONG_TITLE_PATTERNS are
+configured in config.py, not job_radar.py. The Claude rating prompt itself
+(the tier definitions and Skip rules) lives in job_radar.py.
 
 Paste this into Claude or ChatGPT:
 

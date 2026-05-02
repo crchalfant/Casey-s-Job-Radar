@@ -312,6 +312,12 @@ DOMAIN_COMPANY_MAP: dict = {
 # Compiled here so the regex is built once at startup.
 _HARD_DISQ_RE = re.compile(HARD_DISQ_PATTERN, re.IGNORECASE)
 
+# FIX (D2): Pre-compile HTML-stripping and whitespace-collapsing patterns used
+# repeatedly across all search source parsers. Avoids re-compiling the same
+# pattern on every job (10-100+ times per run).
+_HTML_TAG_RE    = re.compile(r"<[^>]+>")
+_WHITESPACE_RE  = re.compile(r"\s+")
+
 def has_disqualifier(job):
     """
     Scans title + description for hard disqualifier keywords.
@@ -3370,7 +3376,6 @@ Tier guide:
 "Good Fit"     = 70-90% match. Strong skills match but different domain OR minor differences in seniority or scope. Still a strong candidate — just needs to pitch the domain transfer.
 "Worth a Look" = 60-70% match. Title fits and the candidate meets some or most of the skills, but it may be a stretch — different industry, slightly off seniority, or requires pitching the skillset differently.
 "Skip"         = Anything else. No realistic chance, or a hard disqualifier is present. Rate as Skip ONLY if one of these is confirmed:
-  - Managing direct reports — ONLY if the description explicitly requires prior people management experience as a must-have. Leading a cross-functional team without direct reports is NOT a disqualifier.
   - On-site or hybrid with required office attendance OUTSIDE the candidate's local metro area. If the description says "remote" as the primary arrangement and mentions in-person as optional or occasional, do NOT skip it. IMPORTANT: If the word "Remote" appears in the job TITLE itself (e.g., "Senior PM (Remote)"), treat the role as remote regardless of what the Location field shows.
   - Staffing agency or contract-to-hire placement. Skip any role posted by a recruiting or staffing firm OR any role explicitly described as contract, temp, or C2H regardless of who posts it.
   - Compensation range is entirely below the candidate's stated salary floor (i.e. the TOP of the posted range is below the floor). A range that straddles the floor should NOT be skipped.
@@ -3437,6 +3442,8 @@ JSON only. No other text."""
             result = json.loads(text)
             tier = result.get("tier", DEFAULT_TIER)
             if tier not in (TIER_PERFECT, TIER_GOOD, TIER_LOOK, TIER_SKIP):
+                with _print_lock:
+                    print(f"  WARNING: Claude returned unexpected tier {tier!r} for '{job.get('title', '?')}' — defaulting to {DEFAULT_TIER!r}")
                 tier = DEFAULT_TIER
             # FIX (see changelog): Validate Claude's salary extraction before returning.
             # Claude sometimes grabs company metrics ("$257B ARR", "$100M raised") as salary.
@@ -4340,12 +4347,21 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
                 buffered,
                 f"☀️ WELCOME BACK - Job Search Autopilot Digest | {VACATION_START.strftime('%b %d')} - {VACATION_END.strftime('%b %d, %Y')}"
             )
+            # Q1: Only clear the buffer AFTER a confirmed successful send.
+            # If send_email() raises, the buffer is preserved so the next run
+            # can retry rather than silently losing all buffered jobs.
+            _email_sent = False
             try:
                 send_email(f"☀️ Welcome Back - Job Search Autopilot Digest ({VACATION_START.strftime('%b %d')}-{VACATION_END.strftime('%b %d')})", body)
+                _email_sent = True
             except Exception:
-                pass  # error already printed by send_email; save_seen still runs below
+                print("  ⚠️  WARNING: Email send FAILED — check Gmail credentials in .env. Digest was not delivered.")
+                print("  save_seen() will still run so jobs are not re-rated tomorrow.")
         save_seen(seen)  # persist regardless of email success
-        clear_buffer()
+        if _email_sent:
+            clear_buffer()
+        else:
+            print("  Vacation buffer preserved — will retry on next run.")
 
     elif on_vacation:
         # Save to buffer, no email — safe to persist seen immediately
@@ -4412,7 +4428,8 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
         try:
             send_email(subject, body, attachment_path=report_path)
         except Exception:
-            pass  # error already printed by send_email
+            print("  ⚠️  WARNING: Email send FAILED — check Gmail credentials in .env. Digest was not delivered.")
+            print("  save_seen() will still run so jobs are not re-rated tomorrow.")
         save_seen(seen)  # persist regardless of email success
 
 if __name__ == "__main__":

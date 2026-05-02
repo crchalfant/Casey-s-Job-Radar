@@ -385,22 +385,23 @@ def api_move():
         # job_data is sent by the frontend when dragging a card.
         job_data = data.get("job") if isinstance(data.get("job"), dict) else {}
         if job_data and column in ("Applied", "Interviewing"):
-            pinned = state[job_id].get("pinned_job", {})
-            # Only write once — don't overwrite with a stale copy on subsequent moves
-            if not pinned:
-                state[job_id]["pinned_job"] = {
-                    "title":            job_data.get("title", ""),
-                    "company":          job_data.get("company", ""),
-                    "location":         job_data.get("location", ""),
-                    "url":              job_data.get("url", ""),
-                    "source":           job_data.get("source", ""),
-                    "tier":             job_data.get("tier", ""),
-                    "reason":           job_data.get("reason", ""),
-                    "salary_min":       job_data.get("salary_min", 0),
-                    "salary_max":       job_data.get("salary_max", 0),
-                    "salary_extracted": job_data.get("salary_extracted", ""),
-                    "date_found":       job_data.get("date_found", ""),
-                }
+            # Q5: Always refresh the snapshot when moving to Applied/Interviewing.
+            # Previously only written once — if a card was moved back to Reviewing
+            # and then re-moved, the snapshot would be stale. Refresh every time
+            # so the pinned data always reflects the most recent move.
+            state[job_id]["pinned_job"] = {
+                "title":            job_data.get("title", ""),
+                "company":          job_data.get("company", ""),
+                "location":         job_data.get("location", ""),
+                "url":              job_data.get("url", ""),
+                "source":           job_data.get("source", ""),
+                "tier":             job_data.get("tier", ""),
+                "reason":           job_data.get("reason", ""),
+                "salary_min":       job_data.get("salary_min", 0),
+                "salary_max":       job_data.get("salary_max", 0),
+                "salary_extracted": job_data.get("salary_extracted", ""),
+                "date_found":       job_data.get("date_found", ""),
+            }
 
         try:
             save_board_state(state)
@@ -1744,6 +1745,15 @@ function compareJobs(a, b, mode) {
   if (mode === 'salary') {
     return extractSalaryRank(b) - extractSalaryRank(a);
   }
+  if (mode === 'fit_asc' || mode === 'fit_desc') {
+    const tierOrder = {'Perfect Fit': 0, 'Good Fit': 1, 'Worth a Look': 2, 'Skip': 3};
+    const aRank = tierOrder[a.tier] ?? 9;
+    const bRank = tierOrder[b.tier] ?? 9;
+    const diff = mode === 'fit_asc' ? aRank - bRank : bRank - aRank;
+    // Tiebreak by date (newest first) so same-tier cards stay in a consistent order
+    if (diff !== 0) return diff;
+    return parseDateForSort(b.date_found) - parseDateForSort(a.date_found);
+  }
   return parseDateForSort(b.date_found) - parseDateForSort(a.date_found);
 }
 
@@ -2225,6 +2235,8 @@ function renderBoard(data) {
           </select>
           <select class="toolbar-select" id="board-sort" onchange="setBoardFilter('sort', this.value)">
             <option value="newest" ${boardFilters.sort === 'newest' ? 'selected' : ''}>Sort: Newest</option>
+            <option value="fit_asc" ${boardFilters.sort === 'fit_asc' ? 'selected' : ''}>Sort: Fit ↑ Best first</option>
+            <option value="fit_desc" ${boardFilters.sort === 'fit_desc' ? 'selected' : ''}>Sort: Fit ↓ Worst first</option>
             <option value="salary" ${boardFilters.sort === 'salary' ? 'selected' : ''}>Sort: Highest salary</option>
             <option value="company" ${boardFilters.sort === 'company' ? 'selected' : ''}>Sort: Company A–Z</option>
           </select>
@@ -2490,6 +2502,13 @@ function updateStats(data) {
   document.getElementById('count-applied').textContent      = a;
   document.getElementById('count-interviewing').textContent = i;
   document.getElementById('badge-board').textContent        = r + a + i;
+  // FIX: refresh skipped count from the server on every board load so the
+  // header number stays accurate without requiring a tab switch.
+  fetch('/api/skipped').then(r => r.json()).then(data => {
+    const n = data.total || 0;
+    document.getElementById('badge-skipped').textContent = n;
+    document.getElementById('count-skipped').textContent = n;
+  }).catch(() => {});
 }
 
 // ── Utils ──────────────────────────────────────────────────────────────────────

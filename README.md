@@ -65,7 +65,7 @@ for [target roles] in the [your city] area. Can you:
 ```
 I want to automatically skip jobs that mention [thing you hate], [industry
 you don't want], and any contract positions. Can you add these to
-HARD_DISQUALIFIERS in job_radar.py and explain what each one does?
+HARD_DISQUALIFIERS in config.py and explain what each one does?
 ```
 
 **Build your company watchlist:**
@@ -121,13 +121,17 @@ The `SETUP.txt` file has more detailed prompts for each specific part.
 
 **Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES`) — tailor these to your exact job titles and industry keywords. All query lists ship with `[Your Role]` and `[Your Industry]` placeholders.
 
+**`HARD_DISQUALIFIERS`** — phrases that auto-skip a job before it reaches Claude. Use this for things you are 100% certain you never want: specific industries, contract-only language, unwanted tech stacks.
+
+**`HARD_DISQ_PATTERN`** — a regex string for disqualifiers that need word-boundary matching (e.g. `r"\bdefi\b|\bcrypto\b"` matches "defi" but not "define"). Use this alongside `HARD_DISQUALIFIERS` for terms where a plain substring match would cause false positives.
+
+**`COMPANY_PREFILTER`** — staffing agencies and job aggregators to block by company name. Add any agencies you keep seeing in your results. Format: `{"agency name": ("staffing", "reason string")}`.
+
+**`WRONG_TITLE_PATTERNS`** — regex patterns that filter out wrong-function job titles before Claude sees them (e.g. software engineer, sales manager, data analyst). Add patterns for any titles that keep slipping through.
+
 ### In `job_radar.py`
 
 **`TARGET_TITLES`** — keyword list inside `search_ats_companies()` that controls which ATS job titles are considered relevant. Anything that does not match at least one keyword is dropped before any other processing. Ships with PM/PO/BA titles as examples — update this for your role type.
-
-**`HARD_DISQUALIFIERS`** — phrases that auto-skip a job before it reaches Claude. Use this for things you are 100% certain you never want: specific industries, contract-only language, unwanted tech stacks.
-
-**`_COMPANY_PREFILTER`** — staffing agencies and job aggregators to block by company name. Add any agencies you keep seeing in your results.
 
 **`SALARY_FLOOR_EXEMPT`** — companies you know pay well above your floor even when a search snippet shows a misleadingly low number. Add employers in your target industry where you trust the compensation.
 
@@ -181,7 +185,7 @@ Getting all the keys takes about 15 minutes. Here's exactly where to go for each
 
 ### Anthropic (Claude AI) — required
 
-Used to rate every job. The only paid service — costs roughly $1–5/month at normal usage.
+Used to rate every job. The only paid service — costs roughly $1–2/month at normal usage (~50–100 jobs/day). All other sources are free.
 
 1. Go to [console.anthropic.com](https://console.anthropic.com)
 2. Create an account and add a payment method (no subscription — pay per use)
@@ -291,7 +295,16 @@ All runtime files live in `output/job-radar/` (gitignored). The radar keeps only
 | `.seen.json` | Deduplication history (60-day rolling window) |
 | `board_state.json` | Dashboard card positions and notes |
 | `radar_runs.db` | SQLite run history for the Health tab |
-| `debug_job_log.txt` | Full job log for debugging source quality |
+| `debug_job_log.txt` | Full job log for debugging source quality — upload to Claude to verify data accuracy |
+| `vacation_buffer.json` | Jobs buffered during vacation — cleared automatically on return day |
+
+## Vacation mode
+
+Set `VACATION_START` and `VACATION_END` in `config.py` to your travel dates. While on vacation the radar runs normally each day but buffers results instead of sending an email. On `VACATION_END` it sends one combined digest covering the entire period, then clears the buffer.
+
+To disable vacation mode, set both dates to any past dates (the defaults in `config.example.py` already do this).
+
+**Important:** `VACATION_END` must be greater than `VACATION_START`. The buffer is only cleared after a successful email send — if the send fails, the buffer is preserved and retried on the next run.
 
 ## License
 
