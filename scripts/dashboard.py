@@ -664,6 +664,80 @@ def api_health():
     except Exception as e:
         app.logger.error("api_health error: %s", e)
         return jsonify({"error": "health unavailable", "runs": [], "sources": [], "last_updated": None}), 500
+
+
+@app.route("/api/health/filter/<reason>")
+def api_health_filter(reason):
+    """Return individual filtered jobs for a given filter reason, newest-run first."""
+    if not os.path.exists(RADAR_DB):
+        return jsonify({"jobs": [], "reason": reason})
+    try:
+        conn = sqlite3.connect(RADAR_DB, timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        # Check table exists (older DBs won't have it yet)
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        if "filtered_job_details" not in tables:
+            return jsonify({"jobs": [], "reason": reason,
+                            "note": "No drilldown data yet — run the radar once to populate."})
+        rows = conn.execute(
+            "SELECT d.title, d.company, d.url, d.source, r.started_at "
+            "FROM filtered_job_details d "
+            "JOIN radar_runs r ON r.id = d.run_id "
+            "WHERE d.reason = ? "
+            "ORDER BY r.id DESC, d.id ASC",
+            (reason,),
+        ).fetchall()
+        conn.close()
+        jobs = [dict(r) for r in rows]
+        return jsonify({"jobs": jobs, "reason": reason, "total": len(jobs)})
+    except Exception as e:
+        app.logger.error("api_health_filter error: %s", e)
+        return jsonify({"error": "unavailable", "jobs": []}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route("/api/health/query-stats")
+def api_health_query_stats():
+    """Return per-source query performance stats across all runs for the Health tab."""
+    if not os.path.exists(RADAR_DB):
+        return jsonify({"sources": []})
+    conn = None
+    try:
+        conn = sqlite3.connect(RADAR_DB, timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        if "query_stats" not in tables:
+            return jsonify({"sources": [],
+                            "note": "No query data yet — run the radar once to populate."})
+        rows = conn.execute(
+            "SELECT source, SUM(raw_count) as raw, SUM(new_count) as new_jobs "
+            "FROM query_stats GROUP BY source ORDER BY raw DESC"
+        ).fetchall()
+        sources = []
+        for r in rows:
+            raw = r["raw"] or 0
+            new = r["new_jobs"] or 0
+            filtered = raw - new
+            filter_rate = round(filtered / raw * 100) if raw > 0 else 0
+            sources.append({
+                "source":      r["source"],
+                "raw":         raw,
+                "new":         new,
+                "filtered":    filtered,
+                "filter_rate": filter_rate,
+            })
+        return jsonify({"sources": sources})
+    except Exception as e:
+        app.logger.error("api_health_query_stats error: %s", e)
+        return jsonify({"error": "unavailable", "sources": []}), 500
     finally:
         if conn is not None:
             conn.close()
@@ -1521,8 +1595,103 @@ BOARD_HTML = r"""<!DOCTYPE html>
     padding: 4px 12px;
     font-size: 12px;
     color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
   }
+  .health-filter-pill:hover { border-color: var(--accent); background: rgba(124,106,245,.08); }
+  .health-filter-pill.active { border-color: var(--accent); background: rgba(124,106,245,.15); color: var(--text); }
   .health-filter-pill strong { color: var(--text); }
+
+  .health-drilldown {
+    margin-top: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .health-drilldown-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .health-drilldown-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
+  }
+  .health-drilldown-close:hover { color: var(--text); }
+  .health-drilldown-list {
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .health-drilldown-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .health-drilldown-item:last-child { border-bottom: none; }
+  .health-drilldown-item:hover { background: rgba(255,255,255,.02); }
+  .health-drilldown-title { flex: 1; color: var(--text); }
+  .health-drilldown-title a { color: var(--accent); text-decoration: none; }
+  .health-drilldown-title a:hover { text-decoration: underline; }
+  .health-drilldown-company { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .health-drilldown-source { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .health-drilldown-empty { padding: 20px 16px; color: var(--muted); font-size: 13px; text-align: center; }
+
+  /* ── Query performance table ─────────────────────────────────────────── */
+  .health-query-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  .health-query-table th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .health-query-table th.hq-num { text-align: right; }
+  .health-query-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    color: var(--text);
+  }
+  .health-query-table td.hq-num { text-align: right; color: var(--muted); }
+  .health-query-table tr:last-child td { border-bottom: none; }
+  .health-query-table tr:hover td { background: rgba(255,255,255,.02); }
+  .hq-bar-wrap {
+    width: 80px;
+    height: 6px;
+    background: rgba(255,255,255,.08);
+    border-radius: 3px;
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+  .hq-bar {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent);
+    opacity: .7;
+  }
+  .hq-bar.high { background: #e05a5a; opacity: .8; }
+  .hq-rate { font-size: 11px; color: var(--muted); }
 
   .health-hero {
     background:
@@ -1702,7 +1871,7 @@ const boardFilters = {
   search: '',
   tier: 'all',
   flagged: 'all',
-  sort: 'newest',
+  sort: 'fit_asc',
 };
 
 function setBoardFilter(key, value) {
@@ -1886,7 +2055,7 @@ function renderSkipped(data) {
             </div>
           </div>
         </div>
-        <div class="skip-reason">${escHtml(job.reason || 'No reason recorded.')}</div>
+        <div class="skip-reason">${escHtml(humanizeSkipReason(job.reason) || 'No reason recorded.')}</div>
         <div class="skip-actions">
           ${job.url
             ? `<button class="btn btn-link" data-url="${escHtml(job.url)}" onclick="openLinkSafe(this)">
@@ -1926,8 +2095,55 @@ async function loadHealth() {
     const res  = await fetch('/api/health');
     const data = await res.json();
     renderHealth(data);
+    // Load query/source performance stats after main render
+    loadQueryStats();
   } catch (e) {
     app.innerHTML = '<div class="loading" style="color:#e05a5a">Failed to load health data.</div>';
+  }
+}
+
+async function loadQueryStats() {
+  const panel = document.getElementById('health-query-stats-panel');
+  if (!panel) return;
+  try {
+    const res  = await fetch('/api/health/query-stats');
+    const data = await res.json();
+    if (data.note) {
+      panel.innerHTML = '<span style="color:var(--muted);font-size:13px">' + escHtml(data.note) + '</span>';
+      return;
+    }
+    const sources = data.sources || [];
+    if (!sources.length) {
+      panel.innerHTML = '<span style="color:var(--muted);font-size:13px">No source data yet</span>';
+      return;
+    }
+    const rows = sources.map(s => {
+      const pct = s.filter_rate || 0;
+      const barClass = pct >= 80 ? 'hq-bar high' : 'hq-bar';
+      return '<tr>'
+        + '<td>' + escHtml(s.source) + '</td>'
+        + '<td class="hq-num">' + s.raw + '</td>'
+        + '<td class="hq-num">' + s.new + '</td>'
+        + '<td class="hq-num">' + s.filtered + '</td>'
+        + '<td><span class="hq-rate">' + pct + '%</span>'
+        +   '<span class="hq-bar-wrap"><span class="' + barClass + '" style="width:' + Math.min(pct, 100) + '%"></span></span>'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+    panel.innerHTML =
+      '<div class="health-table-wrap">'
+      + '<table class="health-query-table">'
+      + '<thead><tr>'
+      + '<th>Source</th>'
+      + '<th class="hq-num">Raw</th>'
+      + '<th class="hq-num">New</th>'
+      + '<th class="hq-num">Filtered</th>'
+      + '<th>Filter rate</th>'
+      + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody>'
+      + '</table></div>';
+  } catch (e) {
+    if (panel) panel.innerHTML = '<span style="color:var(--muted);font-size:13px">Could not load source stats.</span>';
   }
 }
 
@@ -1990,9 +2206,23 @@ function renderHealth(data) {
       filterTotals[f.reason] = (filterTotals[f.reason] || 0) + f.count;
     });
   });
+  const filterLabels = {
+    'below_salary_floor':  'Below salary floor',
+    'category_page':       'Category page (not a job)',
+    'empty_company':       'Missing company name',
+    'wrong_title':         'Wrong job title',
+    'hard_disqualifier':   'Hard disqualifier',
+    'company_prefilter':   'Blocked company',
+    'seen':                'Already seen',
+    'no_description':      'No description',
+    'location_mismatch':   'Location mismatch',
+  };
   const filterPills = Object.entries(filterTotals)
     .sort((a, b) => b[1] - a[1])
-    .map(([r, c]) => `<div class="health-filter-pill"><strong>${c}</strong> ${escHtml(r)}</div>`)
+    .map(([r, c]) => {
+      const label = filterLabels[r] || r.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      return `<div class="health-filter-pill" onclick="loadFilterDrilldown('${escHtml(r)}', this)" data-reason="${escHtml(r)}"><strong>${c}</strong> ${escHtml(label)}</div>`;
+    })
     .join('');
 
   app.innerHTML = `
@@ -2048,9 +2278,90 @@ function renderHealth(data) {
 
           <div class="health-section-title">Filter totals (all runs)</div>
           <div class="health-filter-grid">${filterPills || '<span style="color:var(--muted);font-size:13px">No filter data yet</span>'}</div>
+          <div id="health-drilldown-panel"></div>
+
+          <div class="health-section-title">Source performance</div>
+          <div id="health-query-stats-panel"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
         </div>
       </div>
     </div>`;
+}
+
+// ── Health filter drilldown ────────────────────────────────────────────────────
+let _activeDrilldownReason = null;
+
+async function loadFilterDrilldown(reason, pillEl) {
+  const panel = document.getElementById('health-drilldown-panel');
+  if (!panel) return;
+
+  // Toggle off if same pill clicked again
+  if (_activeDrilldownReason === reason) {
+    _activeDrilldownReason = null;
+    panel.innerHTML = '';
+    document.querySelectorAll('.health-filter-pill').forEach(p => p.classList.remove('active'));
+    return;
+  }
+
+  _activeDrilldownReason = reason;
+  document.querySelectorAll('.health-filter-pill').forEach(p => p.classList.remove('active'));
+  if (pillEl) pillEl.classList.add('active');
+
+  const filterLabels = {
+    'below_salary_floor':         'Below salary floor',
+    'category_page':              'Category page (not a job)',
+    'empty_company':              'Missing company name',
+    'wrong_title':                'Wrong job title',
+    'hard_disqualifier':          'Hard disqualifier',
+    'company_prefilter':          'Blocked company',
+    'seen':                       'Already seen',
+    'no_description':             'No description',
+    'location_mismatch':          'Location mismatch',
+    'onsite_outside_local_metro': 'On-site outside local metro',
+    'non_us_location':            'Non-US location',
+    'bad_scrape':                 'Bad scrape / malformed',
+  };
+  const label = filterLabels[reason] || reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+  panel.innerHTML = '<div class="health-drilldown"><div class="health-drilldown-empty">Loading\u2026</div></div>';
+
+  try {
+    const res  = await fetch('/api/health/filter/' + encodeURIComponent(reason));
+    const data = await res.json();
+
+    if (data.note) {
+      panel.innerHTML = '<div class="health-drilldown"><div class="health-drilldown-empty">' + escHtml(data.note) + '</div></div>';
+      return;
+    }
+
+    const jobs = data.jobs || [];
+    const items = jobs.length === 0
+      ? '<div class="health-drilldown-empty">No jobs recorded for this filter yet.</div>'
+      : jobs.map(j => {
+          const title   = escHtml(j.title   || '(no title)');
+          const company = escHtml(j.company || '');
+          const source  = escHtml(j.source  || '');
+          const linked  = j.url
+            ? '<a href="' + escHtml(j.url) + '" target="_blank" rel="noopener">' + title + '</a>'
+            : title;
+          return '<div class="health-drilldown-item">'
+            + '<span class="health-drilldown-title">'   + linked   + '</span>'
+            + '<span class="health-drilldown-company">' + company  + '</span>'
+            + '<span class="health-drilldown-source">'  + source   + '</span>'
+            + '</div>';
+        }).join('');
+
+    const closeReason = reason.replace(/'/g, "\\'");
+    panel.innerHTML =
+      '<div class="health-drilldown">'
+      + '<div class="health-drilldown-header">'
+      +   '<span>' + escHtml(label) + ' &mdash; ' + jobs.length + ' job' + (jobs.length !== 1 ? 's' : '') + '</span>'
+      +   '<button class="health-drilldown-close" onclick="loadFilterDrilldown(\'' + closeReason + '\', null)" title="Close">\u2715</button>'
+      + '</div>'
+      + '<div class="health-drilldown-list">' + items + '</div>'
+      + '</div>';
+  } catch (e) {
+    panel.innerHTML = '<div class="health-drilldown"><div class="health-drilldown-empty">Failed to load filter details.</div></div>';
+  }
 }
 
 // Fix 2: Safe URL opener that reads from data-url attribute, never from inline string.
@@ -2512,6 +2823,51 @@ function updateStats(data) {
 }
 
 // ── Utils ──────────────────────────────────────────────────────────────────────
+
+// Translate internal pre-filter reason codes into plain English for the Skipped tab.
+function humanizeSkipReason(reason) {
+  if (!reason) return reason;
+
+  // Pre-filter pipeline reasons (set before Claude is called)
+  const prefilterMap = {
+    'category_page':              'Not a real job posting — this was a search results page or job board category page.',
+    'bad_scrape':                 'Malformed listing — the job data was incomplete or corrupted.',
+    'empty_company':              'No company name found — could not identify the employer.',
+    'non_us_location':            'Located outside the US — does not match your location requirements.',
+    'onsite_outside_local_metro': 'On-site role outside your local metro area (Raleigh NC).',
+    'below_salary_floor':         'Salary is below your $150K minimum — the posted range does not reach your floor.',
+  };
+  if (prefilterMap[reason]) return prefilterMap[reason];
+
+  // Wrong title auto-skip
+  if (reason === 'Auto-skipped: wrong title level or known staffing agency') {
+    return 'Wrong job title — this role does not match your target titles (e.g. software engineer, designer, sales, entry-level).';
+  }
+
+  // Hard disqualifier auto-skip — "Auto-disqualified: contains 'X'"
+  const disqMatch = reason.match(/^Auto-disqualified: contains '(.+)'$/i);
+  if (disqMatch) {
+    return `Hard disqualifier — the job contains "${disqMatch[1]}", which is on your never-apply list (crypto, blockchain, staffing agency language, etc.).`;
+  }
+
+  // Company pre-filter — "Company pre-filter (staffing): reason text"
+  const coMatch = reason.match(/^Company pre-filter \((\w+)\): (.+)$/i);
+  if (coMatch) {
+    const category = coMatch[1].toLowerCase();
+    const detail   = coMatch[2];
+    if (category === 'staffing') {
+      return `Staffing agency — ${detail}`;
+    }
+    if (category === 'aggregator') {
+      return `Job aggregator — ${detail}`;
+    }
+    return `Blocked company (${category}) — ${detail}`;
+  }
+
+  // Claude-rated Skip — pass through as-is (already human-readable)
+  return reason;
+}
+
 function escHtml(str) {
   if (!str) return '';
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -2550,41 +2906,28 @@ loadBoard();
 
 
 def _prune_board_state():
-    """Remove stale skip_dismissed entries from board_state.json on startup.
+    """Remove board_state entries that are no longer needed.
 
-    BUG FIX: the original implementation had two prunable set definitions —
-    the second silently overwrote the first. The second condition pruned any
-    entry with rejected=True and no column set, which matched EVERY rejected
-    board card (api_reject only sets rejected=True, never a column). This
-    caused all rejected jobs to disappear from board_state.json on every
-    restart, making them reappear on the board.
+    IMPORTANT: skip_dismissed entries must NEVER be pruned. They are the
+    mechanism that prevents dismissed skipped jobs from reappearing after a
+    dashboard restart or after the radar writes a new *-skipped.json file.
+    Pruning them causes dismissed jobs to come back on every reload — which
+    is the bug this function previously introduced.
 
-    Safe pruning rules:
-    - NEVER prune rejected=True entries. These are explicit user actions on
-      board cards. They must survive restarts or the job reappears.
-    - ONLY prune skip_dismissed=True entries (skipped-tab dismissals). These
-      are low-stakes and accumulate fast (one per skipped job dismissed).
-    - Always preserve flagged, applied_date, column, and restored entries.
+    The only safe thing to prune here is entries that have NO meaningful state
+    at all (empty dicts), which can accumulate from aborted operations.
     """
     state = load_board_state()
     before = len(state)
-    prunable = {
-        jid for jid, s in state.items()
-        if s.get("skip_dismissed")          # only skipped-tab dismissals
-        and not s.get("rejected")           # never touch board rejections
-        and not s.get("flagged")            # keep flagged entries
-        and not s.get("applied_date")       # keep anything with applied date
-        and not s.get("column")             # keep anything moved to a column
-        and not s.get("restored")           # keep restored jobs
-    }
-    # Cap at 500 per run to avoid slow startup after a long gap
-    for jid in list(prunable)[:500]:
+    # Only remove completely empty entries — nothing meaningful to preserve
+    prunable = {jid for jid, s in state.items() if not s}
+    for jid in prunable:
         del state[jid]
     pruned = before - len(state)
     if pruned:
         try:
             save_board_state(state)
-            print(f"  Board state pruned: removed {pruned} stale skip-dismissed entries")
+            print(f"  Board state pruned: removed {pruned} empty entries")
         except OSError:
             pass  # non-critical — pruning is best-effort
 

@@ -259,9 +259,7 @@ LOCATION FILTER — CITIES TO BLOCK
     - Remove any cities that are within your commutable area
     - Add any cities you want to block that are not listed
   Jobs with "remote" anywhere in the title or description always pass through
-  regardless of what these lists contain.
-
-YOUR LOCAL METRO AREA
+  regardless of what these lists contain.YOUR LOCAL METRO AREA
   File: scripts/config.py — variable: LOCAL_METRO_TERMS
   A set of city and suburb names that define your local commutable area. The
   radar uses this to identify local hybrid/onsite roles and show them in a
@@ -343,7 +341,7 @@ THINGS YOU WILL NEED AI TO HELP YOU UPDATE
     WRONG_TITLE_PATTERNS Regex patterns for wrong-function job titles to filter
     All query lists      ADZUNA_QUERIES, BRAVE_QUERIES, TAVILY_QUERIES,
                          LI_REMOTE_QUERIES, LI_LOCAL_QUERIES,
-                         HIMALAYAS_QUERIES, REMOTIVE_QUERIES, JOBICY_QUERIES
+                         HIMALAYAS_QUERIES, JOBICY_QUERIES
                          Replace [Your Role] and [Your Industry] placeholders
 
   job_radar.py:

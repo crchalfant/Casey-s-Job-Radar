@@ -10,11 +10,11 @@ WHAT IT DOES
 SOURCES (ordered richest data first so best version wins dedup)
   Tier 1 - Direct structured APIs (full description + salary + company):
     ATS direct (Greenhouse / Lever / Ashby) - your COMPANIES list from config.py
-    Adzuna         - broad job board, plain-text descriptions, salary min/max
-    Jobicy         - structured remote-only, salary USD, 5000-char descriptions
-    Himalayas      - remote-only board, salary USD, paginated
-    RemoteOK       - remote-only board, salary when listed
-    Remotive       - remote-only board, 5000-char descriptions
+    UltiPro/UKG     - direct ATS for companies using UKG
+    Jobicy          - structured remote-only, salary USD, 5000-char descriptions
+    Adzuna          - broad job board, plain-text descriptions, salary min/max
+    Himalayas       - remote-only board, salary USD, paginated keyword search
+    RemoteOK        - remote-only board, salary when listed
 
   Tier 2 - Aggregators (good data, sourced from other boards):
     USAJobs        - federal government roles
@@ -87,7 +87,7 @@ try:
         MIN_SALARY, VACATION_START, VACATION_END, PROFILE, LOCAL_METRO_TERMS, QUOTES,
         ADZUNA_QUERIES, BRAVE_QUERIES, TAVILY_QUERIES,
         LI_REMOTE_QUERIES, LI_LOCAL_QUERIES,
-        HIMALAYAS_QUERIES, REMOTIVE_QUERIES, USAJOBS_QUERIES, JOBICY_QUERIES,
+        HIMALAYAS_QUERIES, USAJOBS_QUERIES, JOBICY_QUERIES,
         HARD_DISQUALIFIERS, HARD_DISQ_PATTERN, COMPANY_PREFILTER, WRONG_TITLE_PATTERNS,
     )
 except ModuleNotFoundError:
@@ -212,6 +212,27 @@ _RADAR_DB_SCHEMA = """
         count       INTEGER DEFAULT 0,
         FOREIGN KEY (run_id) REFERENCES radar_runs(id)
     );
+
+    CREATE TABLE IF NOT EXISTS filtered_job_details (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id      INTEGER NOT NULL,
+        reason      TEXT NOT NULL,
+        title       TEXT,
+        company     TEXT,
+        url         TEXT,
+        source      TEXT,
+        FOREIGN KEY (run_id) REFERENCES radar_runs(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS query_stats (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id      INTEGER NOT NULL,
+        source      TEXT NOT NULL,
+        query       TEXT NOT NULL,
+        raw_count   INTEGER DEFAULT 0,
+        new_count   INTEGER DEFAULT 0,
+        FOREIGN KEY (run_id) REFERENCES radar_runs(id)
+    );
 """
 
 
@@ -261,6 +282,20 @@ def _db_insert_source_stats(conn, run_id, raw_counts, source_new_counts, source_
     conn.commit()
 
 
+def _db_insert_query_stats(conn, run_id, query_stats: list[dict]) -> None:
+    """Persist per-query performance stats for the Health tab query drilldown.
+    Each entry: {source, query, raw_count, new_count}
+    """
+    for entry in query_stats:
+        conn.execute(
+            "INSERT INTO query_stats (run_id, source, query, raw_count, new_count) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (run_id, entry["source"], entry["query"],
+             entry.get("raw_count", 0), entry.get("new_count", 0)),
+        )
+    conn.commit()
+
+
 def _db_insert_filter_stats(conn, run_id, filtered_jobs):
     by_reason: dict[str, int] = {}
     for j in filtered_jobs:
@@ -269,6 +304,20 @@ def _db_insert_filter_stats(conn, run_id, filtered_jobs):
         conn.execute(
             "INSERT INTO filter_stats (run_id, reason, count) VALUES (?, ?, ?)",
             (run_id, reason, count),
+        )
+    # Also store individual job details for drilldown in the Health tab
+    for j in filtered_jobs:
+        conn.execute(
+            "INSERT INTO filtered_job_details (run_id, reason, title, company, url, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                j.get("reason", ""),
+                j.get("title", ""),
+                j.get("company", ""),
+                j.get("url", ""),
+                j.get("source", ""),
+            ),
         )
     conn.commit()
 
@@ -439,6 +488,9 @@ _CATEGORY_URL_FRAGMENTS = [
     "visasponsorshipjobs", "jobbank.gc.ca",
     "drivecareer.us.com",      # spam aggregator impersonating Amazon careers
     "hiring.cafe/jobs/",      # HiringCafe listing pages (actual jobs use /viewjob/)
+    "aws.amazon.com/what-is/", # AWS educational/marketing pages, not job postings
+    "learn.microsoft.com",     # Microsoft documentation pages, not job postings
+    "docs.microsoft.com",      # Microsoft documentation pages
     "remoteok.com/remote-",   # RemoteOK category pages
     "roberthalf.com",         # Staffing agency search pages
     "weworkremotely.com/categories/",  # WWR category pages (RSS items are fine)
@@ -560,7 +612,21 @@ _EXPIRED_RE = re.compile(
 #
 # ─────────────────────────────────────────────────────────────────────────────
 _NON_US_RE = re.compile(
-    r"(?!)",   # placeholder — matches nothing; replace with your own patterns
+    # Countries and regions that indicate a non-US role
+    r"\b(united kingdom|uk)\b(?!\s*remote)"
+    r"|\b(canada|canadian)\b(?!\s*remote)"
+    r"|\b(australia|australian)\b(?!\s*remote)"
+    r"|\b(germany|german|deutschland)\b(?!\s*remote)"
+    r"|\b(france|french)\b(?!\s*remote)"
+    r"|\b(netherlands|dutch)\b(?!\s*remote)"
+    r"|\b(india|indian)\b(?!\s*remote)"
+    r"|\b(japan|japanese)\b(?!\s*remote)"
+    r"|\b(singapore)\b(?!\s*remote)"
+    r"|\b(brazil|brasil)\b(?!\s*remote)"
+    r"|\b(mexico|mexican)\b(?!\s*remote)"
+    r"|\bemea\b|\bapac\b"
+    r"|\b(europe|european union|eu)\b(?!\s*remote)"
+    r"|\b(latin america|latam)\b(?!\s*remote)",
     re.IGNORECASE,
 )
 
@@ -590,32 +656,27 @@ _NON_US_RE = re.compile(
 # ─────────────────────────────────────────────────────────────────────────────
 
 _URL_CITY_RE = re.compile(
-    # ── HOW TO CUSTOMISE ─────────────────────────────────────────────────────
-    # This regex scans job URLs for city slugs (e.g. /jobs/san-francisco/).
-    # Add cities you want to BLOCK (onsite roles you can't commute to).
-    # Remove cities that ARE within your commutable metro area.
-    #
-    # FORMAT: use URL-slug style with [-_] or %20 for spaces, e.g.:
-    #   r"new[-_]york|new%20york"
-    #   r"|san[-_]francisco|san%20francisco"
-    #   r"|chicago"
-    #
-    # Jobs with "remote" in the title/location/description always pass through
-    # regardless of what this regex matches.
-    # ─────────────────────────────────────────────────────────────────────────
-    #
-    # EXAMPLE ENTRIES (uncomment and adapt):
-    #   r"new[-_]york|new%20york"
-    #   r"|san[-_]francisco|san%20francisco"
-    #   r"|los[-_]angeles|los%20angeles"
-    #   r"|chicago"
-    #   r"|boston"
-    #   r"|seattle"
-    #   r"|austin"
-    #   r"|london|manchester|birmingham"
-    #   r"|berlin|munich|amsterdam|paris"
-    #   r"|toronto|vancouver|montreal|sydney|melbourne"
-    r"(?!)",   # placeholder — matches nothing; replace with your own patterns
+    # Scans job URLs for city slugs. Jobs with "remote" in title/location/desc
+    # always pass through regardless of what this regex matches.
+    # ── US cities outside Raleigh NC metro ───────────────────────────────────
+    r"san[-_]francisco|san%20francisco|menlo[-_]park|palo[-_]alto|mountain[-_]view|sunnyvale|santa[-_]clara"
+    r"|new[-_]york|new%20york|manhattan|brooklyn|jersey[-_]city|hoboken|stamford"
+    r"|seattle|bellevue|kirkland|redmond"
+    r"|los[-_]angeles|los%20angeles|santa[-_]monica|culver[-_]city|san[-_]diego|irvine"
+    r"|chicago|austin|boston|miami|atlanta|denver|phoenix"
+    r"|washington[-_]dc|washington%20dc"
+    r"|dallas|houston|san[-_]antonio|fort[-_]worth"
+    r"|minneapolis|portland|nashville|charlotte|columbus|indianapolis|detroit"
+    r"|salt[-_]lake|las[-_]vegas|kansas[-_]city|st[-_]louis|pittsburgh|cleveland"
+    r"|new[-_]orleans|memphis|richmond|baltimore|philadelphia"
+    # ── International cities ──────────────────────────────────────────────────
+    r"|amsterdam|london|paris|berlin|munich|frankfurt|stockholm|copenhagen"
+    r"|oslo|helsinki|vienna|zurich|dublin|brussels|warsaw|prague|bucharest"
+    r"|toronto|vancouver|montreal|ottawa|calgary"
+    r"|sydney|melbourne|brisbane|auckland"
+    r"|tokyo|singapore|hong[-_]kong|shanghai|beijing"
+    r"|mumbai|delhi|bangalore|bengaluru|hyderabad|pune"
+    r"|sao[-_]paulo|bogota|mexico[-_]city|buenos[-_]aires",
     re.IGNORECASE,
 )
 
@@ -642,20 +703,27 @@ _LOC_CITY_RE = re.compile(
     #
     # Jobs with "remote" in the location field always pass through regardless.
     # ─────────────────────────────────────────────────────────────────────────
-    #
-    # EXAMPLE ENTRIES (uncomment and adapt):
-    #   r"\b(san francisco|menlo park|palo alto|san jose|mountain view|sunnyvale)\b"
-    #   r"|\b(new york|manhattan|brooklyn|jersey city|hoboken|stamford)\b"
-    #   r"|\b(seattle|bellevue|kirkland|redmond)\b"
-    #   r"|\bchicago\b"
-    #   r"|\bboston\b"
-    #   r"|\b(los angeles|santa monica|culver city)\b"
-    #   r"|\baustin\b"
-    #   r"|\bmiami\b"
-    #   r"|\batlanta\b"
-    #   r"|\b(washington dc|washington, dc)\b"
-    #   r"|\b(ca|wa|ny|il|ma|tx|co|ga|fl|az|or|mn|pa)\s*-"  # state-prefix ATS format
-    r"(?!)",   # placeholder — matches nothing; replace with your own patterns
+
+    # ── US cities outside Raleigh NC metro ───────────────────────────────────
+    r"\b(san francisco|menlo park|palo alto|san jose|mountain view|sunnyvale|santa clara|redwood city)\b"
+    r"|\b(new york|manhattan|brooklyn|queens|bronx|jersey city|hoboken|stamford|new york city)\b"
+    r"|\b(seattle|bellevue|kirkland|redmond|tacoma)\b"
+    r"|\b(los angeles|santa monica|culver city|west hollywood|pasadena|irvine|san diego)\b"
+    r"|\bchicago\b|\baustin\b|\bboston\b|\bmiami\b|\batlanta\b|\bdenver\b|\bphoenix\b"
+    r"|\b(washington dc|washington, dc|washington d\.c)\b"
+    r"|\b(dallas|houston|fort worth|san antonio)\b"
+    r"|\b(minneapolis|portland|nashville|charlotte|columbus|indianapolis|detroit)\b"
+    r"|\b(salt lake city|las vegas|kansas city|st\.? louis|pittsburgh|cleveland)\b"
+    r"|\b(new orleans|memphis|richmond|baltimore|philadelphia|hartford)\b"
+    # ── International cities ──────────────────────────────────────────────────
+    r"|\bamsterdam\b|\blondon\b|\bparis\b|\bberlin\b|\bmunich\b|\bfrankfurt\b"
+    r"|\bstockholm\b|\bcopenhagen\b|\boslo\b|\bhelsinki\b|\bvienna\b|\bzurich\b"
+    r"|\bdublin\b|\bbrusssels\b|\bwarsaw\b|\bprague\b|\bbucharest\b|\bbangalore\b"
+    r"|\btoronto\b|\bvancouver\b|\bmontreal\b|\bottawa\b|\bcalgary\b"
+    r"|\bsydney\b|\bmelbourne\b|\bbrisbane\b|\bauckland\b"
+    r"|\btokyo\b|\bsingapore\b|\bhong kong\b|\bshanghai\b|\bbeijing\b"
+    r"|\bmumbai\b|\bdelhi\b|\bbengaluru\b|\bhyderabad\b|\bpune\b"
+    r"|\bsao paulo\b|\bbogota\b|\bmexico city\b|\bbuenos aires\b",
     re.IGNORECASE,
 )
 
@@ -2378,6 +2446,140 @@ def li_enrich_descriptions(jobs: list) -> None:
           f"{rate_limited} rate limited, {errors} errors")
 
 
+def brave_tavily_enrich_descriptions(jobs: list) -> None:
+    """Fetch full job descriptions for Brave and Tavily results that survived filtering.
+
+    Brave and Tavily return short search snippets (150-500 chars). This function
+    fetches the actual job page for each result and extracts the full description,
+    giving Claude much better content to rate.
+
+    Called after dedup so we only fetch pages for jobs that are new and will
+    reach Claude — not for every raw Brave/Tavily result (which would be slow
+    and wasteful since most are duplicates or get filtered out).
+
+    Uses BeautifulSoup to extract text from common job description containers.
+    Falls back gracefully — if a page can't be fetched, the original snippet
+    is kept and Claude rates on that.
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return
+
+    target_jobs = [
+        j for j in jobs
+        if j.get("source") in ("Brave", "Tavily")
+        and not j.get("description")  # skip if already has a description
+        and j.get("url")
+    ]
+    # Also enrich jobs with very short descriptions (snippets under 300 chars)
+    target_jobs += [
+        j for j in jobs
+        if j.get("source") in ("Brave", "Tavily")
+        and j.get("description")
+        and len(j.get("description", "")) < 300
+        and j.get("url")
+        and j not in target_jobs
+    ]
+
+    if not target_jobs:
+        return
+
+    total = len(target_jobs)
+    print(f"  Fetching full descriptions for {total} Brave/Tavily jobs (1-3s delay each)...")
+    ok = no_content = errors = 0
+
+    # CSS selectors for common job description containers, ordered by specificity
+    _DESC_SELECTORS = [
+        # ATS-specific
+        {"class": lambda c: c and "description__text" in c},           # LinkedIn
+        {"class": lambda c: c and "job-description" in c},
+        {"class": lambda c: c and "jobDescription" in c},
+        {"class": lambda c: c and "job_description" in c},
+        {"id": "job-description"},
+        {"id": "jobDescription"},
+        # Generic content containers
+        {"class": lambda c: c and "description" in c and "header" not in c},
+        {"role": "main"},
+        {"tag": "article"},
+        {"tag": "main"},
+    ]
+
+    for i, job in enumerate(target_jobs):
+        if i > 0:
+            time.sleep(random.uniform(1, 3))
+        url   = job.get("url", "")
+        title = (job.get("title") or "")[:45]
+        company = (job.get("company") or "")[:25]
+
+        # Skip known category pages and aggregators that won't have job content
+        if any(frag in url for frag in [
+            "linkedin.com/jobs/search", "indeed.com/q-", "glassdoor.com/Job/",
+            "ziprecruiter.com/Jobs/", "remotive.com/remote-jobs/",
+        ]):
+            no_content += 1
+            continue
+
+        try:
+            r = requests.get(
+                url,
+                headers={"User-Agent": _random_ua(), "Accept-Language": "en-US,en;q=0.9"},
+                timeout=10,
+                allow_redirects=True,
+            )
+            if r.status_code != 200:
+                errors += 1
+                print(f"    [{i+1}/{total}] ✗ HTTP {r.status_code}: {company} — {title}")
+                continue
+
+            soup = BeautifulSoup(r.text, "html.parser")
+
+            # Remove nav, header, footer, scripts, styles — noise
+            for tag in soup(["nav", "header", "footer", "script", "style", "noscript"]):
+                tag.decompose()
+
+            desc_text = ""
+
+            # Try specific selectors first
+            for sel in _DESC_SELECTORS:
+                tag_name = sel.pop("tag", None)
+                if tag_name:
+                    el = soup.find(tag_name)
+                else:
+                    el = soup.find("div", **sel) or soup.find("section", **sel)
+                if el:
+                    raw = el.get_text(" ", strip=True)
+                    raw = re.sub(r"\s+", " ", html.unescape(raw)).strip()
+                    if len(raw) > 200:  # must be substantial
+                        desc_text = raw[:6000]
+                        break
+
+            # Last resort: grab the largest text block on the page
+            if not desc_text:
+                candidates = []
+                for el in soup.find_all(["div", "section", "article"]):
+                    text = el.get_text(" ", strip=True)
+                    if len(text) > 300:
+                        candidates.append(text)
+                if candidates:
+                    best = max(candidates, key=len)
+                    desc_text = re.sub(r"\s+", " ", html.unescape(best)).strip()[:6000]
+
+            if desc_text and len(desc_text) > len(job.get("description", "")):
+                job["description"] = desc_text
+                ok += 1
+                print(f"    [{i+1}/{total}] ✓ {company} — {title} ({len(desc_text)} chars)")
+            else:
+                no_content += 1
+                print(f"    [{i+1}/{total}] ~ No content found: {company} — {title}")
+
+        except Exception as e:
+            errors += 1
+            print(f"    [{i+1}/{total}] ✗ Error: {company} — {title}: {e}")
+
+    print(f"  Brave/Tavily enrichment: {ok} fetched, {no_content} no content, {errors} errors")
+
+
 def search_linkedin():
     try:
         from bs4 import BeautifulSoup  # noqa - verify available
@@ -2415,30 +2617,32 @@ def search_linkedin():
 
 def search_himalayas():
     """
-    Free public API - no key required. Max 20 results per request, paginated
-    via offset. Searches product, business-analyst, and management categories.
+    Free public API - no key required. Uses the /jobs/api/search endpoint
+    which supports keyword filtering (the old /jobs/api browse endpoint
+    ignores the q= param and returns random jobs regardless of query).
+    Paginated via the page= param, 20 results per page.
     """
     queries = HIMALAYAS_QUERIES  # defined in config.py
     jobs = []
-    base = "https://himalayas.app/jobs/api"
+    base = "https://himalayas.app/jobs/api/search"
     seen_urls = set()
 
     for category, keyword in queries:
-        for offset in [0, 20]:  # two pages max per query
+        for page in [1, 2, 3]:  # three pages max per query
             try:
                 resp = requests.get(
                     base,
-                    params={"limit": 20, "offset": offset, "categories": category, "q": keyword},
+                    params={"q": keyword, "limit": 20, "page": page},
                     timeout=15,
                 )
                 if resp.status_code != 200:
                     break
-                items = resp.json() if isinstance(resp.json(), list) else resp.json().get("jobs", [])
+                data  = resp.json()
+                items = data.get("jobs", []) if isinstance(data, dict) else data
                 if not items:
                     break
                 for item in items:
                     title = item.get("title", "") or ""
-                    # keyword filter - only keep relevant titles
                     if not any(w in title.lower() for w in [
                         "product manager", "product owner", "product lead",
                         "principal product", "vp product", "head of product",
@@ -2446,6 +2650,25 @@ def search_himalayas():
                         "customer experience", "digital experience"
                     ]):
                         continue
+                    # Filter out non-US-eligible jobs using locationRestrictions
+                    # Himalayas returns e.g. ["Canada only"], ["Worldwide"], ["USA only"]
+                    loc_restrictions = item.get("locationRestrictions") or []
+                    if isinstance(loc_restrictions, str):
+                        loc_restrictions = [loc_restrictions]
+                    if loc_restrictions:
+                        loc_str = " ".join(loc_restrictions).lower()
+                        # Allow worldwide, US, North America, Americas
+                        us_ok = any(x in loc_str for x in [
+                            "worldwide", "anywhere", "usa", "united states",
+                            "north america", "americas", "us only", "remote"
+                        ])
+                        # Block explicit non-US country-only restrictions
+                        non_us = any(x in loc_str for x in [
+                            "canada only", "uk only", "europe only", "australia only",
+                            "india only", "latam only", "brazil only", "mexico only",
+                        ])
+                        if non_us or (loc_restrictions and not us_ok):
+                            continue
                     url = item.get("applicationLink", "") or ""
                     if url in seen_urls:
                         continue
@@ -2455,94 +2678,29 @@ def search_himalayas():
                     salary  = None
                     if sal_min and item.get("currency", "").upper() == "USD":
                         salary = f"${sal_min:,}-${sal_max:,}" if sal_max else f"${sal_min:,}+"
+                    # Use locationRestrictions to set a meaningful location string
+                    loc_display = "Remote"
+                    if loc_restrictions:
+                        loc_display = ", ".join(loc_restrictions)
                     jobs.append({
                         "title":       title,
                         "company":     item.get("companyName", ""),
-                        "location":    "Remote",
-                        # FIX (see changelog): was using "excerpt" field (~200 char summary).
-                    # Switched to "description" which contains the full HTML job posting.
-                    # Falls back to "excerpt" if description is empty.
-                    "description": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(item.get("description", "") or item.get("excerpt", "") or ""))).strip()[:5000],
+                        "location":    loc_display,
+                        "description": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(item.get("description", "") or item.get("excerpt", "") or ""))).strip()[:5000],
                         "url":         url,
                         "salary":      salary,
                         "posted":      item.get("pubDate", ""),
                         "source":      "Himalayas",
                     })
                 time.sleep(1)
-                if len(items) < 20:
-                    break   # fewer than a full page - no more results
+                total = data.get("totalCount", 0) if isinstance(data, dict) else 0
+                if len(items) < 20 or page * 20 >= min(total, 60):
+                    break   # no more pages worth fetching
             except Exception as e:
-                print(f"  Himalayas error ({category}, offset={offset}): {e}")
+                print(f"  Himalayas error ({keyword!r}, page={page}): {e}")
                 break
 
     print(f"  Himalayas: {len(jobs)} results")
-    return jobs
-
-
-# ── SEARCH: REMOTIVE ──────────────────────────────────────────────────────────
-
-def search_remotive():
-    """
-    Free public API - no key required. Returns all active remote jobs for a
-    given category in a single response. No pagination.
-    Delayed ~24 hours vs real-time, which is fine for a daily digest.
-    """
-    queries = REMOTIVE_QUERIES  # defined in config.py
-    jobs = []
-    seen_urls = set()
-    base = "https://remotive.com/api/remote-jobs"
-
-    for params in queries:
-        try:
-            resp = requests.get(base, params=params, timeout=20)
-            if resp.status_code != 200:
-                print(f"  Remotive error ({params}): HTTP {resp.status_code}")
-                continue
-            items = resp.json().get("jobs", [])
-            for item in items:
-                url = item.get("url", "") or ""
-                if url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                # Candidate location filter - skip non-US-eligible
-                location = (item.get("candidate_required_location") or "").lower()
-                if location and not any(x in location for x in [
-                    "worldwide", "anywhere", "usa", "us only", "united states",
-                    "north america", "americas"
-                    # Note: do NOT add "" here - "" in any string is always True
-                ]):
-                    continue
-                # Title filter - only keep PM/PO/BA/CX roles
-                # Remotive categories are broad (all "product" roles, all "management")
-                # so we filter here to avoid sending designers/engineers to Claude.
-                # Note: "senior pm" / "lead pm" intentionally not included since
-                # "pm" alone is too ambiguous - these rarely appear without "product"
-                job_title = item.get("title", "") or ""
-                if not any(w in job_title.lower() for w in [
-                    "product manager", "product owner", "product lead",
-                    "principal product", "vp product", "head of product",
-                    "business analyst", "product director", "avp product",
-                    "customer experience manager", "customer experience owner",
-                    "digital experience", "experience owner", "staff product",
-                    "group product", "director of product", "head of customer experience",
-                ]):
-                    continue
-                salary = item.get("salary") or None
-                jobs.append({
-                    "title":       job_title,
-                    "company":     item.get("company_name", ""),
-                    "location":    "Remote",
-                    "description": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(item.get("description", "") or ""))).strip()[:5000],
-                    "url":         url,
-                    "salary":      salary,
-                    "posted":      item.get("publication_date", ""),
-                    "source":      "Remotive",
-                })
-            time.sleep(1.5)
-        except Exception as e:
-            print(f"  Remotive error ({params}): {e}")
-
-    print(f"  Remotive: {len(jobs)} results")
     return jobs
 
 
@@ -2788,6 +2946,9 @@ def search_ats_companies():
                     continue
                 seen_urls.add(url)
                 loc = item.get("location", "") or ""
+                # Use isRemote flag when available to set location explicitly
+                if item.get("isRemote") or (item.get("workplaceType", "") or "").lower() == "remote":
+                    loc = loc or "Remote"
                 result.append({
                     "title":       title,
                     "company":     ATS_NAME_OVERRIDES.get(slug, slug.replace("-", " ").title()),
@@ -2865,6 +3026,8 @@ def search_ats_companies():
 _ULTIPRO_COMPANIES = {
     # Add companies that use UltiPro/UKG and are relevant to your search.
     # "CODE/GUID": "Company Display Name",
+    "UNI1046UFMB/d8f90aad-672e-4f0a-bbc1-a17aa8cf1111": "United Fidelity Bank",
+    "WEL1017WWR/d749ccae-68f1-4996-89d2-070ac086e9c2":   "Weltman Financial Services",
 }
 
 _ULTIPRO_SEARCH_URL = (
@@ -3097,9 +3260,9 @@ def search_jobicy():
                     "customer experience", "digital experience", "experience owner",
                 ]):
                     continue
-                # Salary
-                sal_min = item.get("annualSalaryMin") or 0
-                sal_max = item.get("annualSalaryMax") or 0
+                # Salary — Jobicy uses salaryMin/salaryMax (not annualSalaryMin/annualSalaryMax)
+                sal_min = item.get("salaryMin") or 0
+                sal_max = item.get("salaryMax") or 0
                 salary  = None
                 if sal_min and str(item.get("salaryCurrency", "")).upper() == "USD":
                     try:
@@ -3158,7 +3321,7 @@ def search_remoteok():
                 "digital experience", "experience owner", "staff product",
             ]):
                 continue
-            url = item.get("url", "") or ""
+            url = item.get("apply_url", "") or item.get("url", "") or ""
             if not url:
                 url = f"https://remoteok.com/l/{item.get('id', '')}"
             if url in seen_urls:
@@ -3303,14 +3466,23 @@ def get_company_signal(company_name):
 # (salary, pay, compensation, etc.) within 80 chars of any dollar figure, OR
 # the number must be in a plausible annual salary range ($40K-$500K).
 _SALARY_CONTEXT_RE = re.compile(
-    r'(salary|compensation|base pay|total pay|pay range|annual pay|base salary'
-    r'|earn|total comp|tc|starting at|up to|range of)'
-    r'[^$]{0,80}\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?'
-    r'|\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?[^$\w]{0,5}'
-    r'(?:[-to]+\s*\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?)?'
-    r'[^\w]{0,30}(?:per year|annually|\/yr|\/year|USD|usd)'
-    r'|\b(\d{1,3}(?:,\d{3})+)\s*(?:[-to]+\s*(\d{1,3}(?:,\d{3})+))?'
-    r'\s*(?:per year|annually|\/yr|\/year)',
+    # Branch 1: context word + optional $ + number + optional k + optional range + optional currency
+    # Catches: "Salary: 160k-180k CAD", "Compensation: $160,000-$180,000", "Pay range: 155k to 175k"
+    r'(?P<ctx1>salary|compensation|base pay|total pay|pay range|annual pay|base salary'
+    r'|total target cash|target cash|earn|total comp|starting at|up to|range of|salary range)'
+    r'[^$\d]{0,80}'
+    r'\$?\s*(?P<lo1>\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?'
+    r'(?:\s*[-\u2013\u2014to]+\s*\$?\s*(?P<hi1>\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?)?'
+    r'(?:\s*(?:per year|annually|/yr|/year|USD|CAD|usd|cad))?'
+    # Branch 2: $ + number + optional k + range + annual qualifier or currency
+    # Catches: "$160,000 - $180,000 per year", "$175,000 - $195,000 a year", "$140K–$170K USD"
+    r'|\$\s*(?P<lo2>\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?'
+    r'(?:\s*[-\u2013\u2014to]+\s*\$?\s*(?P<hi2>\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*[kK]?)?'
+    r'(?:[^\w]{0,30}(?:per year|a year|annually|/yr|/year|USD|CAD|usd|cad))'
+    # Branch 3: bare comma-formatted numbers + annual qualifier
+    # Catches: "155,000 - 195,000 per year", "160,000-180,000 a year"
+    r'|\b(?P<lo3>\d{1,3}(?:,\d{3})+)\s*(?:[-\u2013\u2014to]+\s*(?P<hi3>\d{1,3}(?:,\d{3})+))?'
+    r'\s*(?:per year|a year|annually|/yr|/year)',
     re.IGNORECASE,
 )
 
@@ -3330,21 +3502,52 @@ def _is_plausible_salary(raw_str):
     return 40000 <= val <= 500000
 
 def extract_salary_from_text(text):
-    """Scan full description text for a salary range and return as readable string.
-    
-    FIX (see changelog): Requires salary context words OR explicit annual qualifier
-    to avoid picking up financial metrics like "$257B ARR" or "$100M raised".
-    Also validates the dollar amount is in a plausible annual salary range.
+    """Scan full description text for a salary range and return a clean display string.
+
+    Uses named groups to reconstruct a clean "$lo-$hi CURRENCY" string rather than
+    returning the raw match (which includes context words like "Salary: ").
+    Validates the dollar amount is in a plausible annual salary range.
     """
     for m in _SALARY_CONTEXT_RE.finditer(text):
-        raw = m.group(0).strip()
-        # Skip years and zip codes
-        if re.fullmatch(r'\d{4,5}', raw.replace(',', '').replace('$', '').strip()):
+        lo_raw = m.group("lo1") or m.group("lo2") or m.group("lo3") or ""
+        hi_raw = m.group("hi1") or m.group("hi2") or m.group("hi3") or ""
+        if not lo_raw:
             continue
-        if _is_plausible_salary(raw):
-            return raw
+        # Detect k-suffix from the full match text around the low number
+        full = m.group(0)
+        lo_pos = full.find(lo_raw)
+        k_suffix = "k" in full[lo_pos:lo_pos + len(lo_raw) + 2].lower()
+        try:
+            lo_val = int(lo_raw.replace(",", ""))
+            if k_suffix:
+                lo_val *= 1000
+        except ValueError:
+            continue
+        # Skip years and zip codes
+        if re.fullmatch(r"\d{4,5}", lo_raw.replace(",", "")):
+            continue
+        # Plausibility check
+        if not (40000 <= lo_val <= 500000):
+            continue
+        # Detect currency
+        currency = ""
+        if re.search(r"\bCAD\b", full, re.IGNORECASE):
+            currency = " CAD"
+        elif re.search(r"\bUSD\b", full, re.IGNORECASE):
+            currency = " USD"
+        # Build clean display string
+        if hi_raw:
+            try:
+                hi_val = int(hi_raw.replace(",", ""))
+                hi_pos = full.find(hi_raw)
+                hi_k = "k" in full[hi_pos:hi_pos + len(hi_raw) + 2].lower()
+                if hi_k:
+                    hi_val *= 1000
+                return f"${lo_val:,}-${hi_val:,}{currency}"
+            except ValueError:
+                pass
+        return f"${lo_val:,}{currency}"
     return None
-
 def rate_job(job):
     full_desc = job.get("description", "")
     pre_salary = extract_salary_from_text(full_desc)
@@ -3953,47 +4156,55 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
         print("Return day! Sending vacation digest.")
 
     # ── Collect jobs from all sources ─────────────────────────────────────────
-    # Order: richest data first -> aggregators -> search engines -> weakest
+    # Order: richest data first -> aggregators -> search engines -> weakest.
+    # Deduplication keeps the FIRST occurrence of each job, so the source with
+    # the best description/salary wins when the same job appears in multiple sources.
+    #
+    # Tier 1 — Direct ATS / structured APIs (full description + salary):
+    #   ATS, UltiPro, Jobicy, Adzuna, RemoteOK, Himalayas
+    # Tier 2 — Aggregators (good data, sourced from other boards):
+    #   USAJobs
+    # Tier 3 — Discovery (find postings the structured boards miss, weak data):
+    #   LinkedIn, Brave, Tavily, WeWorkRemotely
     source_latencies: dict[str, int] = {}
 
     print("Searching ATS direct (Greenhouse/Lever/Ashby)...")
     raw, source_latencies["ATS"] = _timed_source("ATS", search_ats_companies, verbose)
     raw_counts = {"ATS": len(raw)}
 
-    print("Searching Adzuna...")
-    adzuna, source_latencies["Adzuna"] = _timed_source("Adzuna", search_adzuna, verbose)
-    raw += adzuna
-    raw_counts["Adzuna"] = len(adzuna)
+    print("Searching UltiPro/UKG...")
+    ultipro, source_latencies["UltiPro"] = _timed_source("UltiPro", search_ultipro, verbose)
+    raw += ultipro
+    raw_counts["UltiPro"] = len(ultipro)
 
     print("Searching Jobicy...")
     jobicy, source_latencies["Jobicy"] = _timed_source("Jobicy", search_jobicy, verbose)
     raw += jobicy
     raw_counts["Jobicy"] = len(jobicy)
 
-    print("Searching Himalayas...")
-    himalayas, source_latencies["Himalayas"] = _timed_source("Himalayas", search_himalayas, verbose)
-    raw += himalayas
-    raw_counts["Himalayas"] = len(himalayas)
+    print("Searching Adzuna...")
+    adzuna, source_latencies["Adzuna"] = _timed_source("Adzuna", search_adzuna, verbose)
+    raw += adzuna
+    raw_counts["Adzuna"] = len(adzuna)
 
     print("Searching RemoteOK...")
     rok, source_latencies["RemoteOK"] = _timed_source("RemoteOK", search_remoteok, verbose)
     raw += rok
     raw_counts["RemoteOK"] = len(rok)
 
-    print("Searching Remotive...")
-    remotive, source_latencies["Remotive"] = _timed_source("Remotive", search_remotive, verbose)
-    raw += remotive
-    raw_counts["Remotive"] = len(remotive)
+    # NOTE: Remotive removed — their search API is broken server-side as of May 2025,
+    # returning the same 21 random jobs regardless of keyword. Replaced by expanded
+    # Jobicy queries which cover the same remote-only job space reliably.
+
+    print("Searching Himalayas...")
+    himalayas, source_latencies["Himalayas"] = _timed_source("Himalayas", search_himalayas, verbose)
+    raw += himalayas
+    raw_counts["Himalayas"] = len(himalayas)
 
     print("Searching USAJobs...")
     usajobs, source_latencies["USAJobs"] = _timed_source("USAJobs", search_usajobs, verbose)
     raw += usajobs
     raw_counts["USAJobs"] = len(usajobs)
-
-    print("Searching UltiPro/UKG...")
-    ultipro, source_latencies["UltiPro"] = _timed_source("UltiPro", search_ultipro, verbose)
-    raw += ultipro
-    raw_counts["UltiPro"] = len(ultipro)
 
     print("Searching LinkedIn...")
     li, source_latencies["LinkedIn"] = _timed_source("LinkedIn", search_linkedin, verbose)
@@ -4097,6 +4308,30 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
     raw = passing
     print(f"After location filter: {len(raw)}")
 
+    # ── Salary backfill from description ─────────────────────────────────────
+    # ATS sources (Greenhouse, Lever, Ashby) don't expose salary in their public
+    # APIs. Many job descriptions contain salary ranges in plain text. Extract
+    # them here so the salary filter and dashboard display work correctly for
+    # all sources, not just Adzuna/Jobicy which provide structured salary fields.
+    backfilled_salary = 0
+    for j in raw:
+        if j.get("salary_min") or j.get("salary_max") or j.get("salary_extracted"):
+            continue  # already has structured salary data
+        desc = j.get("description", "") or ""
+        if not desc:
+            continue
+        extracted = extract_salary_from_text(desc)
+        if extracted:
+            j["salary_extracted"] = extracted
+            # Also parse into min/max so salary_ok can use structured path
+            parsed = _parse_salary_string(extracted)
+            if parsed:
+                # Use as salary_max so salary_ok correctly checks if range reaches floor
+                j["salary_max"] = parsed
+            backfilled_salary += 1
+    if backfilled_salary:
+        print(f"  Salary backfill: extracted salary from description for {backfilled_salary} jobs")
+
     # ── Salary filter
     passing, rejected = [], []
     for j in raw:
@@ -4124,6 +4359,12 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
     # Called after dedup so we only fetch for jobs that will reach Claude.
     # Mutates description field in place. Randomised 2-5s delays.
     li_enrich_descriptions(new_jobs)
+
+    # ── Enrich Brave/Tavily jobs with full descriptions before rating ──────────
+    # Brave and Tavily return short snippets (150-500 chars). Fetch the actual
+    # job page for each result that survived filtering so Claude gets a full JD.
+    # Only runs for jobs that are new and will reach Claude — not raw results.
+    brave_tavily_enrich_descriptions(new_jobs)
 
     # ── Pre-filter hard disqualifiers - marked as Skip without calling Claude API
     # Three layers of pre-filtering (fastest to slowest):
@@ -4313,6 +4554,22 @@ def _run_pipeline(force_send, verbose, today, on_vacation, return_day,
         try:
             _db_insert_source_stats(_db_conn, _db_run_id, raw_counts, source_new_counts, source_latencies)
             _db_insert_filter_stats(_db_conn, _db_run_id, filtered_jobs)
+            # Build per-source query stats from filtered_jobs breakdown
+            # Groups filtered jobs by source so Health tab can show filter rate per source
+            source_filtered: dict[str, int] = {}
+            for j in filtered_jobs:
+                src = j.get("source", "unknown")
+                source_filtered[src] = source_filtered.get(src, 0) + 1
+            query_stats_list = [
+                {
+                    "source":    src,
+                    "query":     src,   # source-level granularity
+                    "raw_count": raw_counts.get(src, 0),
+                    "new_count": source_new_counts.get(src, 0),
+                }
+                for src in raw_counts
+            ]
+            _db_insert_query_stats(_db_conn, _db_run_id, query_stats_list)
             _db_finish_run(
                 _db_conn, _db_run_id,
                 finished_at=run_time.isoformat(),

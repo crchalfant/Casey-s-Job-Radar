@@ -25,11 +25,14 @@ If you're job hunting, it saves you hours of manual searching. If you're new to 
 
 ## What it does
 
-- Searches 12 sources: ATS direct (Greenhouse/Lever/Ashby), Adzuna, LinkedIn, Brave, Tavily, WeWorkRemotely, Jobicy, Himalayas, Remotive, USAJobs, UltiPro/UKG, RemoteOK
+- Searches 11 sources: ATS direct (Greenhouse/Lever/Ashby), Adzuna, LinkedIn, Brave, Tavily, WeWorkRemotely, Jobicy, Himalayas, USAJobs, UltiPro/UKG, RemoteOK
 - Filters out non-US roles, onsite roles outside your metro, below-salary-floor postings, staffing agencies, and noise pages
+- Extracts salary ranges from job descriptions when not provided as structured data
 - Rates each job with Claude AI (Perfect Fit / Good Fit / Worth a Look / Skip) based on your profile
 - Emails a daily digest sorted by tier
 - Tracks your pipeline on a Kanban dashboard (Reviewing → Applied → Interviewing)
+- Dashboard Health tab shows run history, source performance, and filter drilldown — click any filter pill to see which jobs were caught by it
+- Skipped tab shows plain-English explanations of why each job was filtered
 
 ## Making it yours — vibe coding with AI
 
@@ -119,7 +122,7 @@ The `SETUP.txt` file has more detailed prompts for each specific part.
 
 **`VACATION_START / VACATION_END`** — set both to past dates if you are not on vacation. During vacation the radar buffers results and sends one digest when you return.
 
-**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `REMOTIVE_QUERIES`, `JOBICY_QUERIES`) — tailor these to your exact job titles and industry keywords. All query lists ship with `[Your Role]` and `[Your Industry]` placeholders.
+**Search queries** (`ADZUNA_QUERIES`, `BRAVE_QUERIES`, `TAVILY_QUERIES`, `LI_REMOTE_QUERIES`, `LI_LOCAL_QUERIES`, `HIMALAYAS_QUERIES`, `JOBICY_QUERIES`) — tailor these to your exact job titles and industry keywords. All query lists ship with `[Your Role]` and `[Your Industry]` placeholders.
 
 **`HARD_DISQUALIFIERS`** — phrases that auto-skip a job before it reaches Claude. Use this for things you are 100% certain you never want: specific industries, contract-only language, unwanted tech stacks.
 
@@ -135,7 +138,7 @@ The `SETUP.txt` file has more detailed prompts for each specific part.
 
 **`SALARY_FLOOR_EXEMPT`** — companies you know pay well above your floor even when a search snippet shows a misleadingly low number. Add employers in your target industry where you trust the compensation.
 
-**`_URL_CITY_RE` and `_LOC_CITY_RE`** — two regex lists that catch onsite roles outside your area. Pre-loaded with major US metros and international cities. Remove any cities within your commutable area.
+**`_URL_CITY_RE` and `_LOC_CITY_RE`** — two regex lists that catch onsite roles outside your area. Pre-loaded with major US metros and international cities. Remove any cities within your commutable area, or add cities you want to block.
 
 **Claude rating prompt** — the tier definitions and rules Claude uses to score every job. Find the section starting with `90-100%` in `job_radar.py`. Edit this in plain English to describe your situation. Claude follows this literally, so specificity pays off here more than anywhere else.
 

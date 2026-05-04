@@ -168,21 +168,14 @@ LI_LOCAL_QUERIES = [
 
 HIMALAYAS_QUERIES = [
     # Format: ("category", "keyword")
+    # NOTE: The category param is ignored server-side — only the keyword (q=)
+    # is used for filtering. Keep the category for organizational purposes only.
     # Valid categories: product-management, business-analyst, management,
     #                   software-development, design, data-science, marketing
     ("management", "[your-role]"),
     ("management", "[your-role] [your-industry]"),
-    # Add more category/keyword pairs for your role type:
+    # Add more keyword pairs for your role type:
     # ("your-category", "your keyword"),
-]
-
-REMOTIVE_QUERIES = [
-    # Category-based search — adjust category to match your field
-    # Common categories: product, software-dev, devops, design, marketing,
-    #                    data, finance, hr, qa, writing, teaching
-    {"category": "management"},
-    {"category": "management", "search": "[your role keyword]"},
-    {"search": "[your role keyword]"},
 ]
 
 USAJOBS_QUERIES = [
